@@ -1,0 +1,6 @@
+z3-solver
+python-hcl2
+requests
+google-genai
+python-dotenv
+checkov

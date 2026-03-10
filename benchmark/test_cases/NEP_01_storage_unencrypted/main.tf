@@ -1,0 +1,10 @@
+resource "aws_neptune_cluster" "insecure_neptune" {
+  cluster_identifier  = "neptune-cluster-demo"
+  engine              = "neptune"
+  backup_retention_period = 5
+  preferred_backup_window = "07:00-09:00"
+  skip_final_snapshot     = true
+
+  # CRITICAL FLAW: Storage encryption is false
+  storage_encrypted   = false
+}

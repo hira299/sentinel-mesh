@@ -1,0 +1,13 @@
+# Spins up LocalStack AWS environment
+version: "3.8"
+services:
+  localstack:
+    image: localstack/localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3,ec2,iam,lambda
+    volumes:
+      - "./vulnerable_env:/vulnerable_env"
+      - "./patched_env:/patched_env"
+      - "./localstack_data:/var/lib/localstack"

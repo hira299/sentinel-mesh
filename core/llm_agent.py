@@ -1,0 +1,240 @@
+"""
+llm_agent.py — Sentinel-Mesh LLM Remediation Agent
+====================================================
+Providers (in priority order):
+  1. Cerebras  — fastest inference, generous free tier, rarely rate-limited
+  2. Gemini    — gemini-2.0-flash → gemini-1.5-flash (free tier, quota per minute)
+  3. Groq      — llama-3.3-70b-versatile (free tier, daily token limit)
+
+Rate Limit Strategy:
+  - Per-provider cooldown tracker: if a provider hits 429, it is SKIPPED
+    for COOLDOWN_SECONDS before being tried again — no wasted sleep loops.
+  - Provider order rotates per attempt to spread load:
+      Attempt 1 → Cerebras → Gemini → Groq
+      Attempt 2 → Groq     → Cerebras → Gemini
+      Attempt 3 → Gemini   → Groq     → Cerebras
+  - Between cases: smart sleep with jitter + checkpoint pauses every 10 cases.
+
+Setup: pip install cerebras-cloud-sdk
+       Add CEREBRAS_API_KEY=... to your .env file.
+"""
+
+import os
+import time
+import random
+from dotenv import load_dotenv
+
+load_dotenv()
+
+GENAI_API_KEY    = os.getenv("GENAI_API_KEY")
+GROQ_API_KEY     = os.getenv("GROQ_API_KEY")
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
+
+# How long to skip a provider after it returns 429
+COOLDOWN_SECONDS = 60
+
+# Per-provider cooldown timestamps (module-level — persists across all cases in one run)
+_cooldown_until = {"gemini": 0.0, "groq": 0.0, "cerebras": 0.0}
+
+# ── Initialize clients ────────────────────────────────────────────────────────
+gemini_client   = None
+groq_client     = None
+cerebras_client = None
+
+if GENAI_API_KEY:
+    try:
+        from google import genai
+        gemini_client = genai.Client(api_key=GENAI_API_KEY)
+        print("[llm_agent] Gemini client initialized.")
+    except Exception as e:
+        print(f"[llm_agent] Gemini init failed: {e}")
+
+if GROQ_API_KEY:
+    try:
+        from groq import Groq
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        print("[llm_agent] Groq client initialized.")
+    except Exception as e:
+        print(f"[llm_agent] Groq init failed: {e}")
+
+if CEREBRAS_API_KEY:
+    try:
+        from cerebras.cloud.sdk import Cerebras
+        cerebras_client = Cerebras(api_key=CEREBRAS_API_KEY)
+        print("[llm_agent] Cerebras client initialized.")
+    except Exception as e:
+        print(f"[llm_agent] Cerebras init failed (pip install cerebras-cloud-sdk): {e}")
+
+# ── Model IDs ─────────────────────────────────────────────────────────────────
+GEMINI_MODELS  = ["gemini-flash-latest", "gemini-robotics-er-1.5-preview"]
+GROQ_MODEL     = "llama-3.3-70b-versatile"
+CEREBRAS_MODEL = "gpt-oss-120b"
+
+# ── Provider order rotates per attempt number ─────────────────────────────────
+_PROVIDER_ROTATION = {
+    1: ["cerebras", "gemini", "groq"],
+    2: ["groq",     "cerebras", "gemini"],
+    3: ["gemini",   "groq",     "cerebras"],
+}
+
+
+def _is_cooling(provider):
+    return time.time() < _cooldown_until[provider]
+
+
+def _set_cooldown(provider):
+    _cooldown_until[provider] = time.time() + COOLDOWN_SECONDS
+    print(f"      [llm] {provider.upper()} rate-limited — skipping for {COOLDOWN_SECONDS}s")
+
+
+def _build_prompt(broken_code, z3_error):
+    return (
+        "You are a Senior Cloud Security Engineer specializing in Terraform and AWS security.\n\n"
+        "TASK: Rewrite the following Terraform configuration to fix the security violation described below.\n\n"
+        "STRICT RULES:\n"
+        "- Return ONLY valid Terraform HCL code.\n"
+        "- Do NOT include any explanation, markdown, or backticks.\n"
+        "- Do NOT change resource names or logical structure unnecessarily.\n"
+        "- The fix must directly address the VERIFICATION ERROR below.\n"
+        "- Every attribute you add must be syntactically valid Terraform HCL.\n\n"
+        f"BROKEN TERRAFORM CODE:\n{broken_code}\n\n"
+        f"FORMAL VERIFICATION ERROR (from Z3 SMT solver):\n{z3_error}\n\n"
+        "CORRECTED TERRAFORM CODE:"
+    )
+
+
+def _try_cerebras(prompt):
+    if not cerebras_client:
+        return None
+    if _is_cooling("cerebras"):
+        print("      [llm] Cerebras cooling down — skip")
+        return None
+    print(f"      [llm] Trying Cerebras ({CEREBRAS_MODEL})...")
+    try:
+        resp = cerebras_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model=CEREBRAS_MODEL,
+            temperature=0.1,
+            max_tokens=2048,
+        )
+        text = resp.choices[0].message.content.strip()
+        if text:
+            print("      [llm] Cerebras responded.")
+            return text
+    except Exception as e:
+        err = str(e)
+        if "429" in err or "rate" in err.lower() or "limit" in err.lower():
+            _set_cooldown("cerebras")
+        else:
+            print(f"      [llm] Cerebras error: {err[:100]}")
+    return None
+
+
+def _try_gemini(prompt):
+    if not gemini_client:
+        return None
+    if _is_cooling("gemini"):
+        print("      [llm] Gemini cooling down — skip")
+        return None
+    for model_id in GEMINI_MODELS:
+        print(f"      [llm] Trying Gemini ({model_id})...")
+        try:
+            resp = gemini_client.models.generate_content(model=model_id, contents=prompt)
+            if resp and resp.text and resp.text.strip():
+                print(f"      [llm] Gemini {model_id} responded.")
+                return resp.text.strip()
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "RESOURCE_EXHAUSTED" in err or "quota" in err.lower():
+                _set_cooldown("gemini")
+                return None   # all Gemini models share quota — stop trying
+            print(f"      [llm] Gemini {model_id} error: {err[:100]}")
+    return None
+
+
+def _try_groq(prompt):
+    if not groq_client:
+        return None
+    if _is_cooling("groq"):
+        print("      [llm] Groq cooling down — skip")
+        return None
+    print(f"      [llm] Trying Groq ({GROQ_MODEL})...")
+    try:
+        resp = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model=GROQ_MODEL,
+            temperature=0.1,
+            max_tokens=2048,
+        )
+        text = resp.choices[0].message.content.strip()
+        if text:
+            print("      [llm] Groq responded.")
+            return text
+    except Exception as e:
+        err = str(e)
+        if "429" in err or "rate" in err.lower():
+            _set_cooldown("groq")
+        else:
+            print(f"      [llm] Groq error: {err[:100]}")
+    return None
+
+
+def get_remediation_patch(broken_code: str, z3_error: str, attempt: int = 1) -> str:
+    """
+    Generate a security-compliant Terraform patch via LLM.
+
+    Rotates provider order each attempt to distribute quota load.
+    Skips providers in cooldown immediately — no wasted sleep.
+    Falls back to a short wait + reverse-order retry if all are busy.
+    """
+    prompt   = _build_prompt(broken_code, z3_error)
+    rotation = _PROVIDER_ROTATION.get(attempt, _PROVIDER_ROTATION[1])
+    callers  = {
+        "cerebras": lambda: _try_cerebras(prompt),
+        "gemini":   lambda: _try_gemini(prompt),
+        "groq":     lambda: _try_groq(prompt),
+    }
+
+    print(f"      [llm] Attempt {attempt} — order: {' -> '.join(p.upper() for p in rotation)}")
+
+    for provider in rotation:
+        result = callers[provider]()
+        if result:
+            return result
+
+    # All failed/cooling — short wait then one more pass
+    wait = 20 + random.randint(0, 10)
+    print(f"      [llm] All providers busy — waiting {wait}s then retrying...")
+    time.sleep(wait)
+
+    for provider in reversed(rotation):
+        result = callers[provider]()
+        if result:
+            return result
+
+    print("      [llm] All providers failed.")
+    return "# ERROR: All LLM providers failed or rate-limited."
+
+
+def inter_case_sleep(case_idx: int):
+    """
+    Smart delay between cases:
+    - Base 3s every case (Gemini free tier is ~60 RPM)
+    - +15s checkpoint every 10 cases
+    - ±2s random jitter to desynchronize bursts
+    """
+    base   = 3
+    bonus  = 15 if (case_idx % 10 == 0) else 0
+    jitter = random.uniform(-2, 2)
+    total  = max(1.0, base + bonus + jitter)
+    if bonus:
+        print(f"      [sleep] Checkpoint at case {case_idx} — sleeping {total:.1f}s")
+    time.sleep(total)
+
+
+if __name__ == "__main__":
+    test_code = 'resource "aws_db_instance" "main" {\n  storage_encrypted = false\n}'
+    test_err  = "FAIL: Cloud Perimeter Model — INV-2: sensitive data is unencrypted."
+    print("=== Smoke Test ===")
+    result = get_remediation_patch(test_code, test_err, attempt=1)
+    print(f"Response: {result[:200]}")

@@ -1,0 +1,4 @@
+{
+  "description": "Z3 Security Invariants (e.g., port 22 closed)",
+  "rules": []
+}
