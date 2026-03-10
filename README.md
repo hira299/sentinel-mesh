@@ -7,21 +7,24 @@ Neuro-symbolic framework for autonomous remediation of cloud infrastructure misc
 1. A Terraform misconfiguration is detected and passed to the LLM agent
 2. The agent generates a remediation patch
 3. The Z3 verifier checks the patch against formal security invariants (Cloud Perimeter Model)
-4. If the patch fails verification, it is rejected and the loop retries
-5. Once the patch satisfies all invariants, a formal proof certificate is issued
+4. If the patch fails verification, the Z3 error message is fed back to the LLM and the loop retries
+5. Once the patch satisfies all invariants, it is accepted. For encryption and network violations, a formal proof certificate is additionally issued via dual-solver Z3 refinement (37/88 fixed cases in the benchmark)
 
 The verifier acts as a closed-loop acceptance oracle — the LLM cannot produce a patch that passes without satisfying the formal constraints.
 
 ## Benchmark results
 
-Evaluated on 105 real-world Terraform misconfiguration patterns across 8 cloud infrastructure pillars.
+Evaluated on 105 hand-crafted Terraform misconfiguration benchmark cases across 8 cloud infrastructure pillars.
 
 | Metric | Result |
 |---|---|
-| Overall remediation rate | 88/105 (83.8%) |
-| One-shot resolution rate | 85.2% |
-| Formal proof certificates issued | 37 |
-| LLM hallucination rate | 16.2% |
+| Overall remediation rate | 88/105 (83.81%) |
+| One-shot resolution rate | 85.23% (75/88 at k=1) |
+| Formal proof certificates issued | 37 (29 FPC + 8 PATCH REJECTED) |
+| LLM hallucination rate | 16.19% (17/105) |
+| Mean attempts per fixed case | μ=1.27, σ=0.74 |
+
+> **Note:** The benchmark uses k=5 retries in `experiment_runner.py`. The default `MAX_RETRIES=3` in `orchestrator.py` must be overridden to reproduce published results.
 
 ### By pillar
 
@@ -30,8 +33,8 @@ Evaluated on 105 real-world Terraform misconfiguration patterns across 8 cloud i
 | Identity | 9 | 9 | 100% |
 | Management | 6 | 6 | 100% |
 | Database | 17 | 16 | 94.1% |
-| Security | 12 | 11 | 91.7% |
 | Networking | 15 | 14 | 93.3% |
+| Security | 12 | 11 | 91.7% |
 | Compute | 23 | 17 | 73.9% |
 | Analytics | 13 | 9 | 69.2% |
 | Storage | 10 | 6 | 60.0% |
@@ -47,8 +50,9 @@ make install
 Copy `.env.example` to `.env` and add your API keys:
 
 ```
-LLM_API_KEY=...
-LLM_PROVIDER=...       # cerebras / gemini / groq
+CEREBRAS_API_KEY=...
+GEMINI_API_KEY=...
+GROQ_API_KEY=...
 ```
 
 ## Usage
@@ -71,17 +75,15 @@ Results are written to `logs/research_data_v100.csv`. Figures are saved to `logs
 ```
 sentinel-mesh/
 ├── benchmark/
-│   ├── test_cases/        # 105 Terraform misconfiguration test cases
-│   └── rules.json         # verification rule definitions
+│   └── test_cases/        # 105 Terraform misconfiguration test cases
 ├── core/
-│   ├── verifier.py        # Z3 SMT verifier and Cloud Perimeter Model
-│   ├── orchestrator.py    # closed-loop remediation orchestrator
-│   ├── llm_agent.py       # LLM patch generation agent
-│   ├── experiment_runner.py
-│   └── visualizer.py      # result figure generation
+│   ├── verifier.py        # Z3 SMT verifier and Cloud Perimeter Model (2591 lines)
+│   ├── orchestrator.py    # closed-loop remediation orchestrator (MAX_RETRIES=3)
+│   └── llm_agent.py       # LLM patch generation agent (Cerebras/Gemini/Groq rotation)
 ├── parsers/
 │   └── hcl_to_json.py     # Terraform HCL parser
-├── tests/
+├── experiment_runner.py   # batch benchmark runner (uses k=5 retries)
+├── visualizer.py          # result figure generation
 ├── logs/                  # generated outputs (gitignored)
 ├── Makefile
 └── requirements.txt
@@ -92,7 +94,8 @@ sentinel-mesh/
 - Python 3.10+
 - z3-solver
 - python-hcl2
-- matplotlib / seaborn
+- matplotlib
+- cerebras-cloud-sdk
 - See `requirements.txt` for full list
 
 ## Citation
@@ -100,10 +103,10 @@ sentinel-mesh/
 If you use this work, please cite:
 
 ```bibtex
-@misc{sentinelmesh2025,
+@misc{sentinelmesh2026,
   title   = {Sentinel-Mesh: Neuro-Symbolic Autonomous Remediation of Cloud Misconfigurations},
   author  = {Your Name},
-  year    = {2025},
+  year    = {2026},
   url     = {https://github.com/your-username/sentinel-mesh}
 }
 ```
