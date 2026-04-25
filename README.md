@@ -37,6 +37,8 @@ Evaluated on 105 hand-crafted Terraform misconfiguration benchmark cases across 
 | Hallucinated patches blocked | 17/17 (0% regression rate) |
 | Mean attempts per fixed case | μ=1.27, σ=0.74 |
 
+&nbsp;
+
 > **Reproducibility note:** The benchmark uses k=5 retries in `experiment_runner.py`. The default `MAX_RETRIES=3` in `orchestrator.py` must be overridden to reproduce published results.
 
 ### By pillar
