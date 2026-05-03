@@ -6,6 +6,12 @@ Neuro-symbolic framework for autonomous remediation of cloud infrastructure misc
 
 ---
 
+### Technical Resources
+For a detailed technical deep-dive into the Cloud Perimeter Model and the SMT logic used in this framework, read the article on Medium: 
+**[Beyond Heuristics: Formally Verifying AI-Generated Infrastructure with Z3 SMT Solvers](https://medium.com/@hira229922/beyond-heuristics-formally-verifying-ai-generated-infrastructure-with-z3-smt-solvers-e95fd3a7bf95)**
+
+---
+
 ## How it works
 
 1. A Terraform misconfiguration is detected and passed to the LLM agent
