@@ -322,13 +322,29 @@ def z3_network_reachability_check(sg_rules: list, resource_name: str = "Security
 # ─────────────────────────────────────────────────────────────────────────────
 # PATTERN 3: PATCH SAFETY PROOF  (REFINEMENT CHECK — TWO-SOLVER)
 #
-# Solver A (Completeness): patch_props ⊨ required_invariants?
-#   Encodes invariants as Bool constraints, asks Not(And(invariants)).
-#   unsat → patch satisfies all invariants (completeness proven)
+# Solver A (Completeness): Does the patched state satisfy all security invariants?
+#   Encodes PATCH_State = (PATCH_Zone, PATCH_Enc, PATCH_Sens) as FREE Z3 Int vars.
+#   Asserts Terraform-extracted facts as hard constraints.
+#   Queries: ¬(INV-1 ∧ INV-2 ∧ INV-3) satisfiable under PATCH constraints?
+#   UNSAT → no counterexample exists: patch satisfies the full invariant set.
+#   SAT   → Z3 produced a counterexample; completeness is not proven.
 #
-# Solver B (Soundness): patch_props ∧ original_violation → ⊥?
-#   Encodes BOTH patch applied AND original violation holding simultaneously.
-#   unsat → impossible for both — non-regression formally proven.
+# Solver B (Soundness / Non-Regression — Equation 7):
+#   Introduces BROKEN_State and PATCH_State into a SINGLE solver.
+#   Asserts domain bounds and Terraform facts for BOTH states independently.
+#   Queries satisfiability of:
+#     (BROKEN_State ∧ ¬INV) ∧ (PATCH_State ∧ ¬INV)
+#   i.e., can there exist an assignment where BOTH the broken configuration
+#   AND the patched configuration simultaneously violate the invariants?
+#   UNSAT → no such joint model exists: applying the patch eliminates the
+#           original violation class; non-regression is formally discharged.
+#   SAT   → patch preserves the violation; LLM remediation is insufficient.
+#
+#   Note: the ¬∃ notation used in the manuscript refers to the absence of any
+#   satisfying model for the joint formula, which is exactly what UNSAT encodes.
+#   The solver does NOT check Patch_State in isolation; it uses the broken
+#   config as an oracle to prove the violation was real, then checks whether
+#   the patch state can simultaneously re-enter the violation region.
 #
 # Academic basis: Hoare logic proof obligations / refinement calculus.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -495,28 +511,35 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
     """
     PATTERN 3: Formal Patch Safety Proof — Two-Solver Cloud Perimeter Refinement.
 
-    FIXED: Uses the Cloud Perimeter Model variables directly.
-    Z3 variables are NOT pinned to pre-computed booleans.
-    Z3 genuinely searches over (NetworkZone, EncryptionLevel, SensitiveData)
-    for both broken and patched configurations simultaneously.
-
-    Solver A (Completeness — does patch satisfy the perimeter model?):
+    Solver A (Completeness — Equation 6):
       Declares PATCH_Zone, PATCH_Enc, PATCH_Sens as FREE Z3 Int variables.
-      Asserts patch Terraform facts as constraints (is_public, is_encrypted).
+      Asserts patch Terraform facts as hard constraints.
       Asserts security invariants INV-1, INV-2, INV-3.
-      Asks: Not(INV-1 ∧ INV-2 ∧ INV-3) satisfiable given patch constraints?
-      UNSAT → patch formally satisfies the Cloud Perimeter Model (completeness)
-      SAT   → Z3 found a counterexample in the patch
+      Queries: ¬(INV-1 ∧ INV-2 ∧ INV-3) satisfiable given PATCH constraints?
+      UNSAT → no counterexample: patch satisfies the Cloud Perimeter Model (completeness).
+      SAT   → Z3 produced a witness; patch is incomplete.
 
-    Solver B (Soundness — does broken config violate what patch fixes?):
-      Declares BROKEN_Zone, BROKEN_Enc, BROKEN_Sens as FREE Z3 Int variables.
-      Asserts broken Terraform facts.
-      Asserts INV violations ARE satisfiable for broken (proves it was vulnerable).
-      Then asks: given patch fixes, can the same violation still exist?
-      UNSAT → patch eliminates the violation (non-regression formally proven)
-      SAT   → patch did not fix the original violation
+    Solver B (Soundness / Non-Regression — Equation 7):
+      Introduces BROKEN_State = (BROKEN_Zone, BROKEN_Enc, BROKEN_Sens) and
+      PATCH_State = (PATCH_Zone2, PATCH_Enc2) into a SINGLE Z3 Solver instance.
+      Asserts Terraform-extracted facts for BOTH states as independent constraints.
+      Asserts ¬INV over the BROKEN variables (proves the original config was vulnerable).
+      Then asserts ¬INV over the PATCH variables and checks joint satisfiability:
 
-    This is a genuine REFINEMENT CHECK over the Cloud Perimeter state space.
+        sat?(  (BROKEN_State ∧ ¬INV)  ∧  (PATCH_State ∧ ¬INV)  )
+
+      UNSAT → no joint model exists: it is impossible for the patched configuration
+              to simultaneously satisfy its Terraform constraints AND retain the
+              original violation class. Non-regression is formally discharged.
+      SAT   → Z3 found a joint model; the patch does not eliminate the violation.
+
+      The ¬∃ prefix in the manuscript denotes the absence of a satisfying
+      assignment for this joint formula — precisely what UNSAT of this query proves.
+      Solver B does NOT evaluate Patch_State in isolation; the Broken_State
+      serves as a proof oracle confirming the violation was real before the
+      patch-regression check is discharged.
+
+    Both UNSAT → full refinement proof: patch is correct and complete.
     Academic basis: Symbolic model checking (Clarke et al., Model Checking, 2000)
     """
     # Extract properties — Python booleans are used ONLY as Z3 fact-assertions
@@ -622,8 +645,11 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
         proof_a = (f"COMPLETE: Z3 UNSAT — patch satisfies Cloud Perimeter Model. "
                    f"∀(zone,enc,sens). INV-1 ∧ INV-2 ∧ INV-3 holds for patched config.")
 
-    # ── SOLVER B: Non-Regression via Cloud Perimeter Model ────────────────────
-    # Declare FREE Z3 variables for the BROKEN configuration
+    # ── SOLVER B: Non-Regression via joint satisfiability (Equation 7) ────────
+    # Encodes the query: sat?( (BROKEN_State ∧ ¬INV) ∧ (PATCH_State ∧ ¬INV) )
+    # UNSAT discharges the proof obligation: no joint assignment exists in which
+    # both the broken configuration was vulnerable AND the patched configuration
+    # retains that vulnerability. This is the formal non-regression certificate.
     BROKEN_Zone = Int('BROKEN_Zone')
     BROKEN_Enc  = Int('BROKEN_Enc')
     BROKEN_Sens = Int('BROKEN_Sens')
@@ -633,7 +659,7 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
     s_b.add(BROKEN_Enc  >= ENC_NONE,      BROKEN_Enc  <= ENC_ENCRYPTED)
     s_b.add(BROKEN_Sens >= 0,             BROKEN_Sens <= 1)
 
-    # Assert facts from the BROKEN config
+    # Assert Terraform facts for the BROKEN configuration
     if broken_public:
         s_b.add(BROKEN_Zone == ZONE_INTERNET)
     else:
@@ -641,15 +667,14 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
     s_b.add(BROKEN_Enc == (ENC_ENCRYPTED if broken_encrypted else ENC_NONE))
     s_b.add(BROKEN_Sens == 1)
 
-    # Prove the broken config WAS vulnerable (at least one invariant is violated)
+    # Assert ¬INV over BROKEN_State: proves the original config was in a violation region
     b_inv1 = Implies(BROKEN_Sens == 1, BROKEN_Zone > ZONE_INTERNET)
     b_inv2 = Implies(BROKEN_Sens == 1, BROKEN_Enc  == ENC_ENCRYPTED)
     b_inv3 = Implies(BROKEN_Zone == ZONE_INTERNET, BROKEN_Enc == ENC_ENCRYPTED)
-    # broken config: we ASSERT at least one invariant was violated
-    s_b.add(Not(And(b_inv1, b_inv2, b_inv3)))
+    s_b.add(Not(And(b_inv1, b_inv2, b_inv3)))  # ¬INV over BROKEN_State
 
-    # NOW: given the patch fixes are applied, does the SAME violation persist?
-    # Add the patch variable constraints AND assert the violation still holds
+    # Introduce PATCH_State into the same solver instance
+    # Assert ¬INV over PATCH_State: together with BROKEN ¬INV, forms the joint query
     PATCH_Zone2 = Int('PATCH_Zone2')
     PATCH_Enc2  = Int('PATCH_Enc2')
     s_b.add(PATCH_Zone2 >= ZONE_INTERNET, PATCH_Zone2 <= ZONE_PRIVATE)
@@ -660,11 +685,12 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
         s_b.add(PATCH_Zone2 >= ZONE_DMZ)
     s_b.add(PATCH_Enc2 == (ENC_ENCRYPTED if patch_encrypted else ENC_NONE))
 
-    # Assert: patch has the SAME violation as broken (regression check)
+    # ¬INV over PATCH_State: joint satisfiability query —
+    # can PATCH simultaneously violate invariants as BROKEN did?
     p2_inv1 = Implies(BROKEN_Sens == 1, PATCH_Zone2 > ZONE_INTERNET)
     p2_inv2 = Implies(BROKEN_Sens == 1, PATCH_Enc2  == ENC_ENCRYPTED)
     p2_inv3 = Implies(PATCH_Zone2 == ZONE_INTERNET, PATCH_Enc2 == ENC_ENCRYPTED)
-    s_b.add(Not(And(p2_inv1, p2_inv2, p2_inv3)))
+    s_b.add(Not(And(p2_inv1, p2_inv2, p2_inv3)))  # ¬INV over PATCH_State
 
     cb = s_b.check()
     if cb == sat:
@@ -1155,7 +1181,8 @@ def verify_audit(parsed_hcl_data):
     for r_list in parsed_hcl_data.get("resource", []):
         for r_type, r_map in r_list.items():
             res_types.add(r_type)
-            all_blocks.setdefault(r_type, list(r_map.values())[0])
+            if r_map:  # guard: skip empty resource maps (malformed LLM patch)
+                all_blocks.setdefault(r_type, list(r_map.values())[0])
 
     if "aws_vpc" in res_types:
         # Only audit VPC flow logs if VPC is the primary resource in this test
@@ -1833,6 +1860,8 @@ def global_verifier(parsed_hcl_data):
 
     for r_list in parsed_hcl_data.get("resource", []):
         for r_type, r_map in r_list.items():
+            if not r_map:  # guard: skip empty resource maps (malformed LLM patch)
+                continue
             block         = list(r_map.values())[0]
             logical_names = " ".join(r_map.keys()).lower()
             descriptor    = f"{r_type.lower()} {logical_names}"

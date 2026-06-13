@@ -13,8 +13,6 @@ venv/
 env/
 
 # ── Generated outputs ──────────────────────────────────────────────────────
-logs/*.csv
-logs/*.png
 logs/patches/
 logs/results/
 temp_*.tf

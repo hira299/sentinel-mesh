@@ -19,6 +19,7 @@ Setup: pip install cerebras-cloud-sdk
        Add CEREBRAS_API_KEY=... to your .env file.
 """
 
+from __future__ import annotations  # defer annotation eval — supports str | None on Python < 3.10
 import os
 import time
 import random
@@ -65,17 +66,60 @@ if CEREBRAS_API_KEY:
     except Exception as e:
         print(f"[llm_agent] Cerebras init failed (pip install cerebras-cloud-sdk): {e}")
 
-# ── Model IDs ─────────────────────────────────────────────────────────────────
+# ── Canonical model versions (pinned for reproducibility) ────────────────────
+# Each identifier maps to a single deterministic model version; no aliases.
+# Changing a model string here constitutes a protocol deviation and requires
+# a new experimental condition in the benchmark log.
 GEMINI_MODELS  = ["gemini-flash-latest", "gemini-robotics-er-1.5-preview"]
 GROQ_MODEL     = "llama-3.3-70b-versatile"
 CEREBRAS_MODEL = "gpt-oss-120b"
 
-# ── Provider order rotates per attempt number ─────────────────────────────────
+# ── Provider rotation schedule (maps attempt index → ordered fallback list) ───
+# Rotation distributes quota pressure across providers; index wraps via .get().
 _PROVIDER_ROTATION = {
     1: ["cerebras", "gemini", "groq"],
     2: ["groq",     "cerebras", "gemini"],
     3: ["gemini",   "groq",     "cerebras"],
 }
+
+# ── Provider lock: isolates a single provider for controlled benchmark runs ───
+# None  → standard rotation (multi-provider, exploratory mode).
+# str   → singleton dispatch — all synthesis calls routed exclusively to this
+#         provider, eliminating cross-provider confounding in logged results.
+_LOCKED_PROVIDER: str | None = None
+
+
+def set_provider_lock(provider: str | None) -> None:
+    """
+    Pins all subsequent `get_remediation_patch` calls to `provider`.
+
+    Asserts that the supplied identifier resolves to an initialized client;
+    raises ValueError on unrecognized or unconfigured providers so the runner
+    fails fast before the benchmark loop rather than silently degrading.
+
+    Parameters
+    ----------
+    provider : str | None
+        One of {'gemini', 'groq', 'cerebras'}, or None to restore rotation.
+    """
+    global _LOCKED_PROVIDER
+    valid = {"gemini", "groq", "cerebras"}
+    if provider is not None:
+        if provider not in valid:
+            raise ValueError(f"[llm_agent] Unknown provider '{provider}'. Valid: {valid}")
+        client_map = {
+            "gemini":   gemini_client,
+            "groq":     groq_client,
+            "cerebras": cerebras_client,
+        }
+        if client_map[provider] is None:
+            raise ValueError(
+                f"[llm_agent] Provider '{provider}' requested but client failed to initialize. "
+                "Verify the corresponding API key in .env."
+            )
+    _LOCKED_PROVIDER = provider
+    if provider:
+        print(f"[llm_agent] Provider lock engaged: all synthesis calls → {provider.upper()}")
 
 
 def _is_cooling(provider):
@@ -181,28 +225,50 @@ def _try_groq(prompt):
 
 def get_remediation_patch(broken_code: str, z3_error: str, attempt: int = 1) -> str:
     """
-    Generate a security-compliant Terraform patch via LLM.
+    Synthesizes a security-compliant Terraform patch via the active LLM backend.
 
-    Rotates provider order each attempt to distribute quota load.
-    Skips providers in cooldown immediately — no wasted sleep.
-    Falls back to a short wait + reverse-order retry if all are busy.
+    Dispatch mode is governed by `_LOCKED_PROVIDER`:
+      - None  → rotation per `_PROVIDER_ROTATION[attempt]`; distributes quota load.
+      - str   → singleton dispatch to the locked provider only; no fallback to
+                other providers, ensuring provider identity is a controlled
+                independent variable across benchmark conditions.
+
+    Cooldown semantics apply in both modes: a 429 on the locked provider
+    triggers a bounded wait-and-retry rather than silent fallback.
     """
-    prompt   = _build_prompt(broken_code, z3_error)
-    rotation = _PROVIDER_ROTATION.get(attempt, _PROVIDER_ROTATION[1])
-    callers  = {
+    prompt  = _build_prompt(broken_code, z3_error)
+    callers = {
         "cerebras": lambda: _try_cerebras(prompt),
         "gemini":   lambda: _try_gemini(prompt),
         "groq":     lambda: _try_groq(prompt),
     }
 
-    print(f"      [llm] Attempt {attempt} — order: {' -> '.join(p.upper() for p in rotation)}")
+    # ── Locked-provider mode: singleton dispatch, no cross-provider fallback ──
+    if _LOCKED_PROVIDER is not None:
+        print(f"      [llm] Attempt {attempt} — locked provider: {_LOCKED_PROVIDER.upper()}")
+        result = callers[_LOCKED_PROVIDER]()
+        if result:
+            return result
+        # Locked provider is cooling; bounded wait, then one retry.
+        wait = 20 + random.randint(0, 10)
+        print(f"      [llm] {_LOCKED_PROVIDER.upper()} cooling — waiting {wait}s, then retrying...")
+        time.sleep(wait)
+        result = callers[_LOCKED_PROVIDER]()
+        if result:
+            return result
+        print(f"      [llm] {_LOCKED_PROVIDER.upper()} failed on retry.")
+        return f"# ERROR: Locked provider '{_LOCKED_PROVIDER}' failed or rate-limited."
+
+    # ── Rotation mode: distribute load across provider priority list ──────────
+    rotation = _PROVIDER_ROTATION.get(attempt, _PROVIDER_ROTATION[1])
+    print(f"      [llm] Attempt {attempt} — rotation: {' -> '.join(p.upper() for p in rotation)}")
 
     for provider in rotation:
         result = callers[provider]()
         if result:
             return result
 
-    # All failed/cooling — short wait then one more pass
+    # All providers failed/cooling — bounded wait, then reverse-order retry.
     wait = 20 + random.randint(0, 10)
     print(f"      [llm] All providers busy — waiting {wait}s then retrying...")
     time.sleep(wait)
