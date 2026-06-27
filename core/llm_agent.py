@@ -1,25 +1,23 @@
 """
-llm_agent.py — Sentinel-Mesh LLM Remediation Agent
+llm_agent.py: Sentinel-Mesh LLM Remediation Agent
 ====================================================
 Providers (in priority order):
-  1. Cerebras  — fastest inference, generous free tier, rarely rate-limited
-  2. Gemini    — gemini-2.0-flash → gemini-1.5-flash (free tier, quota per minute)
-  3. Groq      — llama-3.3-70b-versatile (free tier, daily token limit)
+  1. Cerebras: provides low-latency inference with a permissive free-tier quota
+  2. Gemini: gemini-2.0-flash → gemini-1.5-flash (free tier, quota per minute)
+  3. Groq: llama-3.3-70b-versatile (free tier, daily token limit)
 
 Rate Limit Strategy:
-  - Per-provider cooldown tracker: if a provider hits 429, it is SKIPPED
-    for COOLDOWN_SECONDS before being tried again — no wasted sleep loops.
+  - Per-provider cooldown tracker: if a provider hits 429, the provider is excluded
+    from the current attempt for COOLDOWN_SECONDS before being tried again,
+    avoiding unnecessary blocking delays.
   - Provider order rotates per attempt to spread load:
       Attempt 1 → Cerebras → Gemini → Groq
       Attempt 2 → Groq     → Cerebras → Gemini
       Attempt 3 → Gemini   → Groq     → Cerebras
-  - Between cases: smart sleep with jitter + checkpoint pauses every 10 cases.
-
-Setup: pip install cerebras-cloud-sdk
-       Add CEREBRAS_API_KEY=... to your .env file.
+  - Between cases: adaptive inter-case delay with uniform random jitter + checkpoint pauses every 10 cases.
 """
 
-from __future__ import annotations  # defer annotation eval — supports str | None on Python < 3.10
+from __future__ import annotations  # defer annotation eval: supports str | None on Python < 3.10
 import os
 import time
 import random
@@ -34,10 +32,10 @@ CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
 # How long to skip a provider after it returns 429
 COOLDOWN_SECONDS = 60
 
-# Per-provider cooldown timestamps (module-level — persists across all cases in one run)
+# Per-provider cooldown timestamps (module-level - persists across all cases in one run)
 _cooldown_until = {"gemini": 0.0, "groq": 0.0, "cerebras": 0.0}
 
-# ── Initialize clients ────────────────────────────────────────────────────────
+# --- Initialize clients
 gemini_client   = None
 groq_client     = None
 cerebras_client = None
@@ -64,17 +62,16 @@ if CEREBRAS_API_KEY:
         cerebras_client = Cerebras(api_key=CEREBRAS_API_KEY)
         print("[llm_agent] Cerebras client initialized.")
     except Exception as e:
-        print(f"[llm_agent] Cerebras init failed (pip install cerebras-cloud-sdk): {e}")
+        print(f"[llm_agent] Cerebras init failed: {e}")
 
-# ── Canonical model versions (pinned for reproducibility) ────────────────────
-# Each identifier maps to a single deterministic model version; no aliases.
-# Changing a model string here constitutes a protocol deviation and requires
-# a new experimental condition in the benchmark log.
+# Model identifiers: Cerebras and Groq identifiers are pinned versioned strings.
+# The Gemini entry uses the floating alias gemini-flash-latest, which resolved
+# to gemini-1.5-flash-002 at the time of evaluation (see paper Section V).
 GEMINI_MODELS  = ["gemini-flash-latest", "gemini-robotics-er-1.5-preview"]
 GROQ_MODEL     = "llama-3.3-70b-versatile"
 CEREBRAS_MODEL = "gpt-oss-120b"
 
-# ── Provider rotation schedule (maps attempt index → ordered fallback list) ───
+# --- Provider rotation schedule (maps attempt index → ordered fallback list)
 # Rotation distributes quota pressure across providers; index wraps via .get().
 _PROVIDER_ROTATION = {
     1: ["cerebras", "gemini", "groq"],
@@ -82,9 +79,9 @@ _PROVIDER_ROTATION = {
     3: ["gemini",   "groq",     "cerebras"],
 }
 
-# ── Provider lock: isolates a single provider for controlled benchmark runs ───
+# --- Provider lock: isolates a single provider for controlled benchmark runs
 # None  → standard rotation (multi-provider, exploratory mode).
-# str   → singleton dispatch — all synthesis calls routed exclusively to this
+# str   → singleton dispatch - all synthesis calls routed exclusively to this
 #         provider, eliminating cross-provider confounding in logged results.
 _LOCKED_PROVIDER: str | None = None
 
@@ -95,7 +92,7 @@ def set_provider_lock(provider: str | None) -> None:
 
     Asserts that the supplied identifier resolves to an initialized client;
     raises ValueError on unrecognized or unconfigured providers so the runner
-    fails fast before the benchmark loop rather than silently degrading.
+    raises ValueError prior to benchmark loop execution rather than silently degrading.
 
     Parameters
     ----------
@@ -128,7 +125,7 @@ def _is_cooling(provider):
 
 def _set_cooldown(provider):
     _cooldown_until[provider] = time.time() + COOLDOWN_SECONDS
-    print(f"      [llm] {provider.upper()} rate-limited — skipping for {COOLDOWN_SECONDS}s")
+    print(f"      [llm] {provider.upper()} rate-limited - skipping for {COOLDOWN_SECONDS}s")
 
 
 def _build_prompt(broken_code, z3_error):
@@ -151,7 +148,7 @@ def _try_cerebras(prompt):
     if not cerebras_client:
         return None
     if _is_cooling("cerebras"):
-        print("      [llm] Cerebras cooling down — skip")
+        print("      [llm] Cerebras cooling down - skip")
         return None
     print(f"      [llm] Trying Cerebras ({CEREBRAS_MODEL})...")
     try:
@@ -178,7 +175,7 @@ def _try_gemini(prompt):
     if not gemini_client:
         return None
     if _is_cooling("gemini"):
-        print("      [llm] Gemini cooling down — skip")
+        print("      [llm] Gemini cooling down - skip")
         return None
     for model_id in GEMINI_MODELS:
         print(f"      [llm] Trying Gemini ({model_id})...")
@@ -191,7 +188,7 @@ def _try_gemini(prompt):
             err = str(e)
             if "429" in err or "RESOURCE_EXHAUSTED" in err or "quota" in err.lower():
                 _set_cooldown("gemini")
-                return None   # all Gemini models share quota — stop trying
+                return None   # all Gemini models share quota - stop trying
             print(f"      [llm] Gemini {model_id} error: {err[:100]}")
     return None
 
@@ -200,7 +197,7 @@ def _try_groq(prompt):
     if not groq_client:
         return None
     if _is_cooling("groq"):
-        print("      [llm] Groq cooling down — skip")
+        print("      [llm] Groq cooling down - skip")
         return None
     print(f"      [llm] Trying Groq ({GROQ_MODEL})...")
     try:
@@ -243,15 +240,15 @@ def get_remediation_patch(broken_code: str, z3_error: str, attempt: int = 1) -> 
         "groq":     lambda: _try_groq(prompt),
     }
 
-    # ── Locked-provider mode: singleton dispatch, no cross-provider fallback ──
+    # --- Locked-provider mode: singleton dispatch, no cross-provider fallback
     if _LOCKED_PROVIDER is not None:
-        print(f"      [llm] Attempt {attempt} — locked provider: {_LOCKED_PROVIDER.upper()}")
+        print(f"      [llm] Attempt {attempt} - locked provider: {_LOCKED_PROVIDER.upper()}")
         result = callers[_LOCKED_PROVIDER]()
         if result:
             return result
         # Locked provider is cooling; bounded wait, then one retry.
         wait = 20 + random.randint(0, 10)
-        print(f"      [llm] {_LOCKED_PROVIDER.upper()} cooling — waiting {wait}s, then retrying...")
+        print(f"      [llm] {_LOCKED_PROVIDER.upper()} cooling - waiting {wait}s, then retrying...")
         time.sleep(wait)
         result = callers[_LOCKED_PROVIDER]()
         if result:
@@ -259,18 +256,18 @@ def get_remediation_patch(broken_code: str, z3_error: str, attempt: int = 1) -> 
         print(f"      [llm] {_LOCKED_PROVIDER.upper()} failed on retry.")
         return f"# ERROR: Locked provider '{_LOCKED_PROVIDER}' failed or rate-limited."
 
-    # ── Rotation mode: distribute load across provider priority list ──────────
+    # --- Rotation mode: distribute load across provider priority list
     rotation = _PROVIDER_ROTATION.get(attempt, _PROVIDER_ROTATION[1])
-    print(f"      [llm] Attempt {attempt} — rotation: {' -> '.join(p.upper() for p in rotation)}")
+    print(f"      [llm] Attempt {attempt} - rotation: {' -> '.join(p.upper() for p in rotation)}")
 
     for provider in rotation:
         result = callers[provider]()
         if result:
             return result
 
-    # All providers failed/cooling — bounded wait, then reverse-order retry.
+    # All providers failed/cooling - bounded wait, then reverse-order retry.
     wait = 20 + random.randint(0, 10)
-    print(f"      [llm] All providers busy — waiting {wait}s then retrying...")
+    print(f"      [llm] All providers busy - waiting {wait}s then retrying...")
     time.sleep(wait)
 
     for provider in reversed(rotation):
@@ -284,23 +281,23 @@ def get_remediation_patch(broken_code: str, z3_error: str, attempt: int = 1) -> 
 
 def inter_case_sleep(case_idx: int):
     """
-    Smart delay between cases:
-    - Base 3s every case (Gemini free tier is ~60 RPM)
-    - +15s checkpoint every 10 cases
-    - ±2s random jitter to desynchronize bursts
+    Adaptive inter-case delay:
+    - Base delay of 3 seconds per case, calibrated to the most restrictive provider rate limit observed during evaluation.
+    - Additional 15-second delay checkpoint every 10 cases.
+    - Random jitter of +/- 2 seconds to desynchronize requests.
     """
     base   = 3
     bonus  = 15 if (case_idx % 10 == 0) else 0
     jitter = random.uniform(-2, 2)
     total  = max(1.0, base + bonus + jitter)
     if bonus:
-        print(f"      [sleep] Checkpoint at case {case_idx} — sleeping {total:.1f}s")
+        print(f"      [sleep] Checkpoint at case {case_idx} - sleeping {total:.1f}s")
     time.sleep(total)
 
 
 if __name__ == "__main__":
     test_code = 'resource "aws_db_instance" "main" {\n  storage_encrypted = false\n}'
-    test_err  = "FAIL: Cloud Perimeter Model — INV-2: sensitive data is unencrypted."
+    test_err  = "FAIL: Cloud Perimeter Model - INV-2: sensitive data is unencrypted."
     print("=== Smoke Test ===")
     result = get_remediation_patch(test_code, test_err, attempt=1)
     print(f"Response: {result[:200]}")

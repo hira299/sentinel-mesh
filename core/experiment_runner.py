@@ -1,5 +1,5 @@
 """
-experiment_runner.py — Sentinel-Mesh Batch Benchmark Runner
+experiment_runner.py - Sentinel-Mesh Batch Benchmark Runner
 ============================================================
 CLI Interface
 -------------
@@ -25,7 +25,7 @@ Rate-Limit Mitigation
   - Inter-case sleep with jitter + checkpoint pauses every 10 cases.
 """
 
-from __future__ import annotations  # defer annotation eval — supports str | None on Python < 3.10
+from __future__ import annotations  # defer annotation eval: supports str | None on Python < 3.10
 
 import sys
 import os
@@ -119,7 +119,7 @@ def _parse_args() -> argparse.Namespace:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Provider → Model mapping (pinned for reproducibility):\n"
+            "Provider to model mapping (Cerebras and Groq identifiers are pinned; gemini-flash-latest is a floating alias resolved to gemini-1.5-flash-002 at evaluation time):\n"
             "  gemini    gemini-flash-latest / gemini-robotics-er-1.5-preview\n"
             "  groq      llama-3.3-70b-versatile\n"
             "  cerebras  gpt-oss-120b\n\n"
@@ -158,15 +158,15 @@ def run_experiment(provider: str | None = None) -> None:
     """
     os.makedirs("logs", exist_ok=True)
 
-    # ── Resolve provider lock and output path ─────────────────────────────────
-    # Lock must be engaged before any orchestrator call; fail-fast if the
+    # --- Resolve provider lock and output path
+    # Lock must be engaged before any orchestrator call; abort if the
     # provider's API key is absent or the client failed to initialise.
     if provider is not None:
         set_provider_lock(provider)
 
     csv_file = _resolve_csv_path(provider)
 
-    # ── Emit run header with experimental condition metadata ──────────────────
+    # --- Emit run header with experimental condition metadata
     condition_label = provider.upper() if provider else "ROTATION (Cerebras→Gemini→Groq)"
     print(f"{BOLD}{CYAN}[CONFIG] Provider condition : {condition_label}{RESET}")
     print(f"{BOLD}{CYAN}[CONFIG] Output CSV         : {csv_file}{RESET}")
@@ -178,14 +178,14 @@ def run_experiment(provider: str | None = None) -> None:
     ])
     total = len(all_folders)
 
-    # ── Checkpoint resume ─────────────────────────────────────────────────────
+    # --- Checkpoint resume
     # Reads the target CSV (provider-scoped) to identify already-persisted cases;
     # ensures re-invocation is idempotent within a given experimental condition.
     completed = _load_completed_cases(csv_file)
     pending   = [f for f in all_folders if f not in completed]
 
     if completed:
-        print(f"{YELLOW}[RESUME] {len(completed)} cases already done — "
+        print(f"{YELLOW}[RESUME] {len(completed)} cases already done - "
               f"resuming from case {len(completed)+1}/{total}{RESET}")
     else:
         print(f"{BOLD}{CYAN}[START] Sentinel-Mesh Benchmark: {total} cases{RESET}")
@@ -194,7 +194,7 @@ def run_experiment(provider: str | None = None) -> None:
         print(f"{GREEN}[DONE] All {total} cases already completed for condition: {condition_label}{RESET}")
         return
 
-    # ── Open CSV in append mode (write header only if new file) ──────────────
+    # --- Open CSV in append mode (write header only if new file)
     file_exists = os.path.exists(csv_file) and os.path.getsize(csv_file) > 0
     csv_handle  = open(csv_file, mode='a', newline='', encoding='utf-8')
     writer      = csv.DictWriter(csv_handle, fieldnames=FIELDNAMES)
@@ -210,7 +210,7 @@ def run_experiment(provider: str | None = None) -> None:
             global_idx = len(completed) + local_idx
             tf_file    = os.path.join(BASE_DIR, folder, "main.tf")
 
-            # ── ETA estimate (rolling rate over elapsed wall time) ────────────
+            # --- ETA estimate (rolling rate over elapsed wall time)
             elapsed   = time.time() - start_time
             rate      = local_idx / elapsed if elapsed > 0 else 0.1
             remaining = len(pending) - local_idx
@@ -220,11 +220,11 @@ def run_experiment(provider: str | None = None) -> None:
             print(f"\n{BOLD}[{global_idx}/{total}]{RESET} {CYAN}{folder}{RESET}  "
                   f"{YELLOW}(ETA ~{eta_str}){RESET}")
 
-            # ── Phase 1: initial Z3 verdict before LLM remediation ────────────
+            # --- Phase 1: initial Z3 verdict before LLM remediation
             data       = parse_hcl(tf_file)
             z3_initial = global_verifier(data)
 
-            # ── Phase 2: closed-loop neuro-remediation (LLM + Z3 retry) ───────
+            # --- Phase 2: closed-loop neuro-remediation (LLM + Z3 retry)
             outcome       = run_sentinel_mesh(tf_file)
             result        = outcome["result"]
             attempts      = outcome["attempts"]
@@ -235,7 +235,7 @@ def run_experiment(provider: str | None = None) -> None:
             hallucination   = result == "HALLUCINATION"
             retry_str       = " | ".join(retry_hist) if retry_hist else "N/A"
 
-            # ── Persist row; flush immediately to survive interruption ─────────
+            # --- Persist row; flush immediately to survive interruption
             writer.writerow({
                 "timestamp":     datetime.now().strftime("%H:%M:%S"),
                 "case_id":       folder,
@@ -248,31 +248,31 @@ def run_experiment(provider: str | None = None) -> None:
             })
             csv_handle.flush()
 
-            # ── Console summary ───────────────────────────────────────────────
+            # --- Console summary
             if result == "PASS":
                 pass_count += 1
-                print(f"      {GREEN}PASS{RESET} — no violation")
+                print(f"      {GREEN}PASS{RESET} - no violation")
             elif result == "FIXED":
                 fixed_count += 1
                 all_attempts.append(attempts)
-                print(f"      {GREEN}FIXED{RESET} — {MAGENTA}{attempts}{RESET} attempt(s)")
+                print(f"      {GREEN}FIXED{RESET} - {MAGENTA}{attempts}{RESET} attempt(s)")
             else:
                 hallucination_count += 1
                 all_attempts.append(attempts)
-                print(f"      {RED}HALLUCINATION{RESET} — failed after {attempts} attempt(s)")
+                print(f"      {RED}HALLUCINATION{RESET} - failed after {attempts} attempt(s)")
 
-            # ── Rate-limit mitigation: smart inter-case sleep with jitter ─────
+            # --- Rate-limit mitigation: adaptive inter-case delay with uniform random jitter
             inter_case_sleep(global_idx)
 
     finally:
         csv_handle.close()
 
-    # ── Session summary ───────────────────────────────────────────────────────
+    # --- Session summary
     avg           = (sum(all_attempts) / len(all_attempts)) if all_attempts else 0
     total_elapsed = int(time.time() - start_time)
 
     print(f"\n{BOLD}{'='*60}{RESET}")
-    print(f"{BOLD}BENCHMARK COMPLETE — {csv_file}{RESET}")
+    print(f"{BOLD}BENCHMARK COMPLETE - {csv_file}{RESET}")
     print(f"{BOLD}Condition: {condition_label}{RESET}")
     print(f"{'='*60}")
     print(f"Total cases run this session:  {len(pending)}")

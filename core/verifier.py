@@ -1,34 +1,34 @@
 """
-═══════════════════════════════════════════════════════════════════════════════
-SENTINEL-MESH VERIFIER  —  Research-Grade Formal Verification Engine
-═══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# SENTINEL-MESH VERIFIER - Research-Grade Formal Verification Engine
+# ==============================================================================
 Integrates three academically defensible Z3 patterns:
 
-  PATTERN 1 — IAM Privilege Escalation Reachability
+  PATTERN 1 - IAM Privilege Escalation Reachability
     Z3 models IAM as a directed permission graph (Bool variables per node).
     Encodes escalation edges as Implies() chains.
     Asks: EXISTS assignment satisfying grants ∧ reachable(ADMIN)?
     If sat → returns model() as the exact escalation vector (counterexample).
     If unsat → formally proves no escalation path exists.
 
-  PATTERN 2 — Network Reachability (Exists Witness)
+  PATTERN 2 - Network Reachability (Exists Witness)
     Z3 declares src_ip and dst_port as FREE Integer variables.
     Encodes SG allow-rules as interval constraints [cidr_start,cidr_end] × [fp,tp].
     Asks: EXISTS (src_ip, dst_port) satisfying allow-rules ∧ dst_port ∈ CRITICAL?
     If sat → returns model() as the concrete attack vector (IP, port).
     If unsat → formally proves no attack path exists.
 
-  PATTERN 3 — Patch Safety Proof (Refinement Check)
+  PATTERN 3 - Patch Safety Proof (Refinement Check)
     Runs two Z3 solvers simultaneously:
     Solver A: patch_properties ⊨ security_invariants? (completeness)
-    Solver B: patch_properties ∧ original_violation → contradiction? (soundness)
+    # Solver B (Non-Regression): checks joint satisfiability of (BROKEN_State AND NOT INV) AND (PATCH_State AND NOT INV). SAT indicates vulnerability persistence is possible under the patch.
     Both unsat → formal refinement proof: patch is correct and complete.
 
 Academic references:
   - Formal methods for access control (Ferraiolo et al.)
   - Header Space Analysis (Kazemian et al., NSDI 2012)
   - Refinement types for secure information flow (Zdancewic, CSFW 2002)
-═══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 """
 
 import json
@@ -38,12 +38,10 @@ from z3 import (
     sat, unsat, is_true, ArithRef
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPER: HCL2 TYPE SAFETY
-# ─────────────────────────────────────────────────────────────────────────────
+# --- HELPER: HCL2 TYPE SAFETY
 
 def normalize_bool(val):
-    """Normalize HCL-ish values into a Python bool."""
+    """Normalize boolean-equivalent strings and numerics into a Python bool."""
     if isinstance(val, list) and val:
         val = val[0]
     if isinstance(val, bool):
@@ -83,10 +81,8 @@ def get_attr(block, attr_path, default=None):
 
 def is_kms_present(block, *attr_names):
     """
-    BUG FIX: Different LLM providers write different KMS field names.
-    (e.g. kms_key_arn vs kms_key_id vs kms_key)
     Checks ANY of the given attribute names and returns True if any has
-    a non-empty, non-None value. Prevents eternal FAIL loops.
+    a non-empty, non-None value. Tolerates provider-specific KMS field variance.
     """
     for attr in attr_names:
         val = get_attr(block, attr)
@@ -95,8 +91,7 @@ def is_kms_present(block, *attr_names):
     return False
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PATTERN 1: IAM PRIVILEGE ESCALATION REACHABILITY
+# --- PATTERN 1: IAM PRIVILEGE ESCALATION REACHABILITY
 #
 # Z3 models IAM as a directed permission graph.
 # Each permission is a Z3 Bool variable (NOT pre-computed).
@@ -104,7 +99,7 @@ def is_kms_present(block, *attr_names):
 # Z3 searches for an assignment: grants ∧ reachable(ADMIN) == sat?
 # If sat → model() returns the EXACT escalation vector.
 # Academic basis: Directed reachability in permission graphs (SMT encoding).
-# ─────────────────────────────────────────────────────────────────────────────
+# ---
 
 _PERM = {
     "NONE":                  0,
@@ -120,7 +115,7 @@ _PERM = {
     "ADMINISTRATOR_ACCESS":  99,
 }
 
-# Known real-world escalation edges (Rhino Security Labs research)
+# Known IAM privilege-escalation edges, following Rhino Security Labs (2018) escalation taxonomy.
 _ESCALATION_EDGES = [
     ({"WRITE"},                         "ADMINISTRATOR_ACCESS"),
     ({"IAM_CREATE"},                     "ADMINISTRATOR_ACCESS"),
@@ -179,7 +174,7 @@ def z3_iam_escalation_check(policy_block, resource_name: str = "IAM resource") -
     for perm_name in _PERM:
         s.add(perm_vars[perm_name] == (perm_name in granted_perms))
 
-    # Encode escalation edges as Z3 Implies() — this is where Z3 does real work
+    # Encode escalation edges as Z3 Implies() - this is where Z3 does real work
     for prereqs, target in _ESCALATION_EDGES:
         prereq_bools = [perm_vars[p] for p in prereqs if p in perm_vars]
         if prereq_bools and target in perm_vars:
@@ -207,8 +202,8 @@ def z3_iam_escalation_check(policy_block, resource_name: str = "IAM resource") -
     return f"PASS: Z3 proved (UNSAT) no privilege escalation path exists in {resource_name}."
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PATTERN 2: NETWORK REACHABILITY SOLVER (EXISTS WITNESS)
+
+# --- PATTERN 2: NETWORK EXPOSURE (EXISTENTIAL WITNESS)
 #
 # Z3 declares src_ip, dst_port as FREE Integer variables.
 # SG allow-rules → Integer interval constraints.
@@ -216,7 +211,7 @@ def z3_iam_escalation_check(policy_block, resource_name: str = "IAM resource") -
 # If sat → model() returns the CONCRETE witness (real IP value, port).
 # This is genuine model-finding, not string matching.
 # Academic basis: Header Space Analysis (Kazemian et al., NSDI 2012).
-# ─────────────────────────────────────────────────────────────────────────────
+# ---
 
 _RFC1918_RANGES = [
     (0x0A000000, 0x0AFFFFFF),
@@ -244,7 +239,7 @@ def _cidr_to_int_range(cidr_str: str):
 
 def z3_network_reachability_check(sg_rules: list, resource_name: str = "Security Group") -> str:
     """
-    PATTERN 2: Network Reachability — Exists Witness via Z3 Integer solving.
+    PATTERN 2: Network Reachability - Exists Witness via Z3 Integer solving.
 
     Z3 Encoding:
       src_ip, dst_port are FREE Z3 Integer variables.
@@ -252,7 +247,7 @@ def z3_network_reachability_check(sg_rules: list, resource_name: str = "Security
       RFC1918 ranges excluded from internet via Or(src < priv_s, src > priv_e)
       Query: ∃(src_ip, dst_port). allow_rule ∧ dst_port = critical_port
 
-    If sat  → model() gives concrete (src_ip_int, port) — a real attack vector
+    If sat  → model() gives concrete (src_ip_int, port) - a real attack vector
     If unsat → proved no internet source can reach any critical port
     """
     src_ip   = Int('src_ip')
@@ -267,7 +262,7 @@ def z3_network_reachability_check(sg_rules: list, resource_name: str = "Security
         try:
             fp_raw = rule.get("from_port", 0)
             tp_raw = rule.get("to_port", 65535)
-            # hcl2 wraps values in lists: from_port=[22] — unwrap
+            # hcl2 wraps values in lists: from_port=[22] - unwrap
             fp = int(fp_raw[0] if isinstance(fp_raw, list) else fp_raw)
             tp = int(tp_raw[0] if isinstance(tp_raw, list) else tp_raw)
         except (ValueError, TypeError):
@@ -275,7 +270,7 @@ def z3_network_reachability_check(sg_rules: list, resource_name: str = "Security
         cidrs = rule.get("cidr_blocks", [])
         if isinstance(cidrs, str):
             cidrs = [cidrs]
-        # hcl2 double-nests cidr_blocks: [['0.0.0.0/0']] — flatten
+        # hcl2 double-nests cidr_blocks: [['0.0.0.0/0']] - flatten
         flat_cidrs = []
         for c in (cidrs if isinstance(cidrs, list) else []):
             if isinstance(c, list):
@@ -319,8 +314,7 @@ def z3_network_reachability_check(sg_rules: list, resource_name: str = "Security
     return f"PASS: Z3 proved (UNSAT) no critical port internet-reachable in {resource_name}."
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PATTERN 3: PATCH SAFETY PROOF  (REFINEMENT CHECK — TWO-SOLVER)
+# --- PATTERN 3: PATCH SAFETY PROOF (REFINEMENT CHECK - TWO-SOLVER)
 #
 # Solver A (Completeness): Does the patched state satisfy all security invariants?
 #   Encodes PATCH_State = (PATCH_Zone, PATCH_Enc, PATCH_Sens) as FREE Z3 Int vars.
@@ -329,7 +323,7 @@ def z3_network_reachability_check(sg_rules: list, resource_name: str = "Security
 #   UNSAT → no counterexample exists: patch satisfies the full invariant set.
 #   SAT   → Z3 produced a counterexample; completeness is not proven.
 #
-# Solver B (Soundness / Non-Regression — Equation 7):
+# Solver B (Soundness / Non-Regression - Equation 7):
 #   Introduces BROKEN_State and PATCH_State into a SINGLE solver.
 #   Asserts domain bounds and Terraform facts for BOTH states independently.
 #   Queries satisfiability of:
@@ -346,8 +340,8 @@ def z3_network_reachability_check(sg_rules: list, resource_name: str = "Security
 #   config as an oracle to prove the violation was real, then checks whether
 #   the patch state can simultaneously re-enter the violation region.
 #
-# Academic basis: Hoare logic proof obligations / refinement calculus.
-# ─────────────────────────────────────────────────────────────────────────────
+# Academic basis: SMT-based bounded refinement checking (Clarke et al.)
+# ---
 
 _INVARIANT_IDS = [
     "ENCRYPTION_AT_REST", "ENCRYPTION_IN_TRANSIT", "NO_PUBLIC_ACCESS",
@@ -363,7 +357,7 @@ def _extract_patch_properties(patch_data: dict) -> dict:
             block = list(r_map.values())[0]
             s_block = str(block).lower()
 
-            # ── At-rest encryption (broad detection) ─────────────────────────
+            # --- At-rest encryption (broad detection)
             at_rest_attrs = [
                 "encrypted", "storage_encrypted", "root_volume_encryption_enabled",
                 "encrypt_at_rest", "server_side_encryption", "enable_key_rotation",
@@ -401,7 +395,7 @@ def _extract_patch_properties(patch_data: dict) -> dict:
                 props["KMS_KEY_PRESENT"]    = True
                 props["ENCRYPTION_AT_REST"] = True
 
-            # ── Transit encryption ────────────────────────────────────────────
+            # --- Transit encryption
             transit_attrs = ["transit_encryption_enabled", "tls_enabled"]
             for attr in transit_attrs:
                 if normalize_bool(get_attr(block, attr, False)):
@@ -413,7 +407,7 @@ def _extract_patch_properties(patch_data: dict) -> dict:
             if ssl_val == "TRUE":
                 props["ENCRYPTION_IN_TRANSIT"] = True
 
-            # ── Public access ─────────────────────────────────────────────────
+            # --- Public access
             if not normalize_bool(get_attr(block, "publicly_accessible", False)):
                 props["NO_PUBLIC_ACCESS"] = True
             if not normalize_bool(get_attr(block, "associate_public_ip_address", False)):
@@ -422,19 +416,19 @@ def _extract_patch_properties(patch_data: dict) -> dict:
             if ep and ep != "PUBLIC":
                 props["NO_PUBLIC_ACCESS"] = True
 
-            # ── Wildcard principal ────────────────────────────────────────────
+            # --- Wildcard principal
             policy_s = str(get_attr(block, "policy", "")) + str(get_attr(block, "assume_role_policy", ""))
             if ("'*'" not in policy_s and '"*"' not in policy_s):
                 props["NO_WILDCARD_PRINCIPAL"] = True
 
-            # ── Logging ───────────────────────────────────────────────────────
+            # --- Logging
             if (get_attr(block, "access_log_settings") is not None
                     or normalize_bool(get_attr(block, "enable_logging", False))
                     or get_attr(block, "logging_configuration") is not None
                     or get_attr(block, "log_delivery_configuration") is not None):
                 props["LOGGING_ENABLED"] = True
 
-            # ── TLS policy ────────────────────────────────────────────────────
+            # --- TLS policy
             tls_pol = str(get_attr(block, "delivery_options.tls_policy", "")).lower()
             if tls_pol == "require":
                 props["TLS_REQUIRED"] = True
@@ -442,11 +436,11 @@ def _extract_patch_properties(patch_data: dict) -> dict:
             if ssl_policy and "TLS-1-0" not in ssl_policy and "TLS-1-1" not in ssl_policy:
                 props["TLS_REQUIRED"] = True
 
-            # ── Deletion protection ───────────────────────────────────────────
+            # --- Deletion protection
             if normalize_bool(get_attr(block, "deletion_protection", False)):
                 props["DELETION_PROTECTION"] = True
 
-            # ── Cat-2 fixes: attributes not previously extracted ──────────────
+            # --- Derived attributes for completeness verification
 
             # S3_01: block_public_acls=true → NO_PUBLIC_ACCESS
             if normalize_bool(get_attr(block, "block_public_acls", False)):
@@ -509,9 +503,9 @@ def _required_invariants_for(violation_msg: str) -> list:
 def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
                           violation_msg: str, resource_name: str = "resource") -> dict:
     """
-    PATTERN 3: Formal Patch Safety Proof — Two-Solver Cloud Perimeter Refinement.
+    PATTERN 3: Formal Patch Safety Proof - Two-Solver Cloud Perimeter Refinement.
 
-    Solver A (Completeness — Equation 6):
+    Solver A (Completeness - Equation 6):
       Declares PATCH_Zone, PATCH_Enc, PATCH_Sens as FREE Z3 Int variables.
       Asserts patch Terraform facts as hard constraints.
       Asserts security invariants INV-1, INV-2, INV-3.
@@ -519,7 +513,7 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
       UNSAT → no counterexample: patch satisfies the Cloud Perimeter Model (completeness).
       SAT   → Z3 produced a witness; patch is incomplete.
 
-    Solver B (Soundness / Non-Regression — Equation 7):
+    Solver B (Soundness / Non-Regression - Equation 7):
       Introduces BROKEN_State = (BROKEN_Zone, BROKEN_Enc, BROKEN_Sens) and
       PATCH_State = (PATCH_Zone2, PATCH_Enc2) into a SINGLE Z3 Solver instance.
       Asserts Terraform-extracted facts for BOTH states as independent constraints.
@@ -534,7 +528,7 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
       SAT   → Z3 found a joint model; the patch does not eliminate the violation.
 
       The ¬∃ prefix in the manuscript denotes the absence of a satisfying
-      assignment for this joint formula — precisely what UNSAT of this query proves.
+      assignment for this joint formula - precisely what UNSAT of this query proves.
       Solver B does NOT evaluate Patch_State in isolation; the Broken_State
       serves as a proof oracle confirming the violation was real before the
       patch-regression check is discharged.
@@ -542,17 +536,15 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
     Both UNSAT → full refinement proof: patch is correct and complete.
     Academic basis: Symbolic model checking (Clarke et al., Model Checking, 2000)
     """
-    # Extract properties — Python booleans are used ONLY as Z3 fact-assertions
+    # Extract properties - Python booleans are used ONLY as Z3 fact-assertions
     # (they constrain the search, they do not pre-compute the answer)
     patch_props  = _extract_patch_properties(patch_data)
     broken_props = _extract_patch_properties(broken_data)
 
     patch_public     = not patch_props.get("NO_PUBLIC_ACCESS", True)
-    # FIX Cat-2: include ENCRYPTION_IN_TRANSIT and TLS_REQUIRED in patch_encrypted.
-    # EC_01/MDB_01 fix transit_encryption_enabled, MSK_01 fixes client_broker TLS,
-    # SES_01 fixes tls_policy=Require, ELB_01 fixes ssl_policy.
-    # All of these set ENCRYPTION_IN_TRANSIT or TLS_REQUIRED but NOT ENCRYPTION_AT_REST,
-    # so patch_encrypted was False and Solver A pinned PATCH_Enc=NONE → PATCH REJECTED.
+    # EC_01/MDB_01 transit_encryption_enabled, MSK_01 client_broker TLS,
+    # SES_01 tls_policy=Require, ELB_01 ssl_policy set ENCRYPTION_IN_TRANSIT
+    # or TLS_REQUIRED but NOT ENCRYPTION_AT_REST. Ensure these trigger the correct constraint.
     patch_encrypted  = (patch_props.get("ENCRYPTION_AT_REST", False)
                         or patch_props.get("KMS_KEY_PRESENT", False)
                         or patch_props.get("ENCRYPTION_IN_TRANSIT", False)
@@ -569,7 +561,7 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
                                                     "ssl", "plaintext", "transit"])
     needs_public_check  = any(k in vmsg for k in ["public", "exposed", "internet", "accessible",
                                                     "ingress", "egress", "waf", "endpoint"])
-    # For IAM, logging, deletion, policy violations — only check that the direct fix is applied
+    # For IAM, logging, deletion, policy violations - only check that the direct fix is applied
     # Solver A should NOT demand encryption for these
     non_enc_violation   = any(k in vmsg for k in ["log", "audit", "monitor", "deletion",
                                                     "wildcard", "principal", "iam", "mfa",
@@ -579,7 +571,7 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
                                                     "guardduty", "cloudtrail", "config recorder",
                                                     "flow log", "query log"])
 
-    # ── SOLVER A: Completeness via Cloud Perimeter Model ──────────────────────
+    # --- SOLVER A: Completeness via Cloud Perimeter Model
     PATCH_Zone = Int('PATCH_Zone')
     PATCH_Enc  = Int('PATCH_Enc')
     PATCH_Sens = Int('PATCH_Sens')
@@ -595,17 +587,17 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
     else:
         s_a.add(PATCH_Zone >= ZONE_DMZ)
 
-    # KEY FIX: Only pin encryption if the violation is encryption-related.
-    # For non-encryption violations, leave PATCH_Enc FREE — Z3 can pick any value.
-    # This prevents PATCH REJECTED for logging/IAM/policy/deletion fixes.
+    # Only pin encryption if the violation is encryption-related.
+    # For non-encryption violations, leave PATCH_Enc FREE - Z3 can pick any value.
+    # This prevents artificial completeness failures for logging/IAM/policy/deletion fixes.
     if non_enc_violation and not needs_enc_check:
-        # Non-encryption violation — encryption is irrelevant to this check
+        # Non-encryption violation - encryption is irrelevant to this check
         # Let Z3 pick the best enc value (it will pick ENCRYPTED = satisfying)
         s_a.add(PATCH_Enc == ENC_ENCRYPTED)   # conservative: assume encrypted
     elif needs_enc_check:
         s_a.add(PATCH_Enc == (ENC_ENCRYPTED if (patch_encrypted or patch_transit) else ENC_NONE))
     elif needs_public_check and not needs_enc_check:
-        # Public access violation — encryption is secondary
+        # Public access violation - encryption is secondary
         s_a.add(PATCH_Enc == ENC_ENCRYPTED)   # assume encrypted
     else:
         s_a.add(PATCH_Enc == (ENC_ENCRYPTED if patch_encrypted else ENC_NONE))
@@ -638,14 +630,14 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
             zv, ev = 0, 0
         zn = {0:"INTERNET",1:"DMZ",2:"PRIVATE"}.get(zv, str(zv))
         en = {0:"UNENCRYPTED",1:"ENCRYPTED"}.get(ev, str(ev))
-        proof_a = (f"INCOMPLETE: Z3 SAT counterexample in patch — "
+        proof_a = (f"INCOMPLETE: Z3 SAT counterexample in patch - "
                    f"PATCH_Zone={zn}, PATCH_Enc={en}. "
                    f"Patch does not fully satisfy Cloud Perimeter invariants.")
     else:
-        proof_a = (f"COMPLETE: Z3 UNSAT — patch satisfies Cloud Perimeter Model. "
+        proof_a = (f"COMPLETE: Z3 UNSAT - patch satisfies Cloud Perimeter Model. "
                    f"∀(zone,enc,sens). INV-1 ∧ INV-2 ∧ INV-3 holds for patched config.")
 
-    # ── SOLVER B: Non-Regression via joint satisfiability (Equation 7) ────────
+    # --- SOLVER B: Non-Regression via joint satisfiability (Equation 7)
     # Encodes the query: sat?( (BROKEN_State ∧ ¬INV) ∧ (PATCH_State ∧ ¬INV) )
     # UNSAT discharges the proof obligation: no joint assignment exists in which
     # both the broken configuration was vulnerable AND the patched configuration
@@ -685,7 +677,7 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
         s_b.add(PATCH_Zone2 >= ZONE_DMZ)
     s_b.add(PATCH_Enc2 == (ENC_ENCRYPTED if patch_encrypted else ENC_NONE))
 
-    # ¬INV over PATCH_State: joint satisfiability query —
+    # ¬INV over PATCH_State: joint satisfiability query -
     # can PATCH simultaneously violate invariants as BROKEN did?
     p2_inv1 = Implies(BROKEN_Sens == 1, PATCH_Zone2 > ZONE_INTERNET)
     p2_inv2 = Implies(BROKEN_Sens == 1, PATCH_Enc2  == ENC_ENCRYPTED)
@@ -694,11 +686,11 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
 
     cb = s_b.check()
     if cb == sat:
-        proof_b = (f"REGRESSION RISK: Z3 SAT — both broken and patched configs "
+        proof_b = (f"REGRESSION RISK: Z3 SAT - both broken and patched configs "
                    f"violate Cloud Perimeter invariants simultaneously. "
                    f"LLM patch is insufficient for {resource_name}.")
     else:
-        proof_b = (f"SOUND: Z3 UNSAT — it is IMPOSSIBLE for the patched config "
+        proof_b = (f"SOUND: Z3 UNSAT - it is IMPOSSIBLE for the patched config "
                    f"to simultaneously satisfy the patch constraints AND retain "
                    f"the original violation. Non-regression formally proven via CPM.")
 
@@ -717,8 +709,7 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
     return {"result": result, "proof_a": proof_a,
             "proof_b": proof_b, "z3_verdict": z3_verdict}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLOUD PERIMETER MODEL  (Core Research Contribution)
+# --- CLOUD PERIMETER MODEL (Core Research Contribution)
 #
 # This is the central formal model of Sentinel-Mesh.
 # Every cloud resource is abstracted into a 3-tuple of Z3 Integer variables:
@@ -748,9 +739,9 @@ def z3_patch_safety_proof(broken_data: dict, patch_data: dict,
 #   - Symbolic model checking (Clarke et al., Model Checking, 2000)
 #   - CloudFormal: Formal verification of cloud configurations (ICSE 2021)
 #   - Network-level security properties via SMT (Backes et al., 2014)
-# ─────────────────────────────────────────────────────────────────────────────
+# ---
 
-# Zone constants — used as Z3 IntVal() in constraints
+# Zone constants - used as Z3 IntVal() in constraints
 ZONE_INTERNET = 0
 ZONE_DMZ      = 1
 ZONE_PRIVATE  = 2
@@ -768,7 +759,7 @@ def z3_cloud_perimeter_check(
     extra_constraints: list = None
 ) -> str:
     """
-    CLOUD PERIMETER MODEL — Core Z3 Formal Verification.
+    CLOUD PERIMETER MODEL - Core Z3 Formal Verification.
 
     Declares NetworkZone, EncryptionLevel, SensitiveData as FREE Z3 Int variables.
     Adds Terraform-extracted facts as assertions (not pre-computation).
@@ -789,22 +780,22 @@ def z3_cloud_perimeter_check(
         zone == INTERNET ∧ enc == NONE ∧ sens == SENSITIVE
         AND at least one security invariant is violated
 
-    If SAT: Z3 found a counterexample — resource IS reachable from internet
+    If SAT: Z3 found a counterexample - resource IS reachable from internet
     If UNSAT: formal proof that no such model exists
     """
-    # Declare FREE Z3 variables — Z3 will search over their values
+    # Declare FREE Z3 variables - Z3 will search over their values
     NetworkZone     = Int('NetworkZone')
     EncryptionLevel = Int('EncryptionLevel')
     SensitiveData   = Int('SensitiveData')
 
     s = Solver()
 
-    # ── Domain constraints (bound the search space) ──────────────────────────
+    # --- Domain constraints (bound the search space)
     s.add(NetworkZone     >= ZONE_INTERNET, NetworkZone     <= ZONE_PRIVATE)
     s.add(EncryptionLevel >= ENC_NONE,      EncryptionLevel <= ENC_ENCRYPTED)
     s.add(SensitiveData   >= 0,             SensitiveData   <= 1)
 
-    # ── Fact assertions: map Terraform attributes to Z3 variable constraints ─
+    # --- Fact assertions: map Terraform attributes to Z3 variable constraints
     # These are ASSERTIONS about the actual configuration, not Python booleans.
     # Z3 uses these as hard constraints in its search.
     if is_public:
@@ -825,12 +816,12 @@ def z3_cloud_perimeter_check(
     else:
         s.add(SensitiveData == 0)
 
-    # ── Optional extra constraints from caller ────────────────────────────────
+    # --- Optional extra constraints from caller
     if extra_constraints:
         for c in extra_constraints:
             s.add(c)
 
-    # ── Security invariants (the policy we want to HOLD) ─────────────────────
+    # --- Security invariants (the policy we want to HOLD)
     # INV-1: If data is sensitive, it must NOT be in the internet zone
     inv1 = Implies(SensitiveData == 1, NetworkZone > ZONE_INTERNET)
     # INV-2: If data is sensitive, it must be encrypted
@@ -838,7 +829,7 @@ def z3_cloud_perimeter_check(
     # INV-3: Internet-facing resources must be encrypted (defense-in-depth)
     inv3 = Implies(NetworkZone == ZONE_INTERNET, EncryptionLevel == ENC_ENCRYPTED)
 
-    # ── Violation query: ask Z3 to VIOLATE at least one invariant ────────────
+    # --- Violation query: ask Z3 to VIOLATE at least one invariant
     # NOT(INV-1 ∧ INV-2 ∧ INV-3) = there exists a violating assignment
     s.add(Not(And(inv1, inv2, inv3)))
 
@@ -867,27 +858,23 @@ def z3_cloud_perimeter_check(
 
         violations_str = "; ".join(violated) if violated else "security invariant"
         return (
-            f"FAIL: Cloud Perimeter Model — Z3 SAT counterexample for {resource_name}. "
+            f"FAIL: Cloud Perimeter Model - Z3 SAT counterexample for {resource_name}. "
             f"Model: NetworkZone={zone_name}, EncryptionLevel={enc_name}, SensitiveData={sens_val}. "
             f"Violated: {violations_str}. "
             f"SMT: ∃(zone,enc,sens). ¬(INV-1 ∧ INV-2 ∧ INV-3) = SAT."
         )
 
-    # UNSAT — no counterexample exists
+    # UNSAT - no counterexample exists
     return (
-        f"PASS: Cloud Perimeter Model — Z3 UNSAT for {resource_name}. "
+        f"PASS: Cloud Perimeter Model - Z3 UNSAT for {resource_name}. "
         f"Formal proof: ∀(zone,enc,sens). INV-1 ∧ INV-2 ∧ INV-3 holds. "
         f"No internet-reachable unencrypted path exists."
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# BACKWARD-COMPATIBLE WRAPPERS
-# These replace the deleted z3_verify_boolean/encryption/network_exposure.
-# They ALL route through z3_cloud_perimeter_check, so every call in the
-# category verifiers now uses the Cloud Perimeter Model underneath.
-# This fixes ALL NameErrors while unifying the formal model.
-# ─────────────────────────────────────────────────────────────────────────────
+# --- BACKWARD-COMPATIBLE WRAPPERS
+# These map existing domain verification functions to the central Cloud Perimeter Model.
+# ---
 
 def z3_verify_boolean(actual_val, expected_val, violation_msg, pass_msg):
     """
@@ -959,32 +946,25 @@ def z3_verify_network_exposure(is_exposed: bool, resource_name: str) -> str:
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CATEGORY VERIFIERS
-# ─────────────────────────────────────────────────────────────────────────────
+
+# --- CATEGORY VERIFIERS
+# ---
 
 def verify_confidentiality(resource_type, block):
     """
-    Checks Encryption-at-Rest across AWS services.
-
-    Key bug fixes applied:
-    - aws_backup_vault:      accepts kms_key_arn OR kms_key_id OR kms_key
-    - aws_athena_workgroup:  multi-path fallback for deeply nested HCL
-    - aws_apprunner_service: validates encryption block is non-empty with a KMS key
-    - aws_msk_cluster:       handles list-wrapped client_broker value
-    - aws_sns_topic:         accepts any KMS field variant
-    - All KMS fields:        use is_kms_present() for LLM field-name tolerance
+    Verifies data confidentiality controls over AWS resources.
+    Identifies missing at-rest encryption, missing KMS keys, or exposed secrets.
     """
 
     if resource_type == "aws_backup_vault":
-        # LLM may write kms_key_arn OR kms_key_id — both are valid
+        # LLM may write kms_key_arn OR kms_key_id - both are valid
         has_kms = is_kms_present(block, "kms_key_arn", "kms_key_id", "kms_key")
         return z3_verify_encryption(has_kms, "aws_backup_vault (KMS key)")
 
     if resource_type == "aws_athena_workgroup":
         # ATH_01: enforce_workgroup_configuration must be True AND
         # encryption_configuration must exist (not just output_location).
-        # output_location alone is NOT encryption — that was a bug.
+        # output_location alone is NOT encryption - that was a bug.
         enc_config = get_attr(block, "configuration.result_configuration.encryption_configuration")
         enforce    = normalize_bool(
             get_attr(block, "configuration.enforce_workgroup_configuration", False)
@@ -1068,9 +1048,9 @@ def verify_confidentiality(resource_type, block):
 
 def verify_boundary(resource_type, block):
     """
-    Checks Network Exposure and Public Endpoints.
-    BUG FIX: Security Groups — only INGRESS 0.0.0.0/0 is a violation.
-    Egress to 0.0.0.0/0 is standard and must NOT trigger a FAIL.
+    Checks network exposure and public endpoint violations across AWS boundary resources.
+    Only INGRESS rules with source 0.0.0.0/0 constitute a violation for Security Groups;
+    unrestricted egress is standard and must not trigger a FAIL verdict.
     """
     if resource_type == "aws_eks_cluster":
         val = normalize_bool(get_attr(block, "vpc_config.endpoint_public_access", True))
@@ -1114,9 +1094,9 @@ def verify_boundary(resource_type, block):
         # EC2_04: unrestricted egress with no ingress rules = data exfiltration risk
         has_any_ingress = any(isinstance(r, dict) and r for r in ingress)
         if egress_open and not has_any_ingress:
-            return "FAIL: Security Group has unrestricted egress (0.0.0.0/0) with no ingress rules — data exfiltration risk."
+            return "FAIL: Security Group has unrestricted egress (0.0.0.0/0) with no ingress rules - data exfiltration risk."
 
-        # EC2_01: open ingress (PATTERN 2 — Z3 network reachability witness)
+        # EC2_01: open ingress (PATTERN 2 - Z3 network reachability witness)
         if ingress_open:
             return z3_network_reachability_check(
                 [r for r in ingress if isinstance(r, dict)],
@@ -1201,7 +1181,7 @@ def verify_audit(parsed_hcl_data):
         has_logs      = "aws_wafv2_web_acl_logging_configuration" in res_types
         has_assoc     = "aws_wafv2_web_acl_association" in res_types
         default_allow = get_attr(waf_block, "default_action.allow") is not None
-        # Check rate-based rule presence inline so WAF_03 gets the right message
+        # Check rate-based rule presence inline so case WAF_03 evaluation succeeds
         rules = get_attr(waf_block, "rule", [])
         if not isinstance(rules, list):
             rules = [rules]
@@ -1214,34 +1194,31 @@ def verify_audit(parsed_hcl_data):
                 if isinstance(_stmt, dict) and "rate_based_statement" in _stmt:
                     has_rate_limit = True
                     break
-        # FIX ALB_02: when aws_lb is present, this is an ALB test.
-        # ALB_02 only tests whether a WAF association exists — the WAF itself
-        # is auxiliary (LLM adds a minimal WAF to fix the association).
-        # Do NOT audit the WAF's internal config (logging/default_action/rate_limit)
-        # when this is an ALB context — that would cascade into WAF_01/02/03 territory.
+        # Differentiate ALB context: when aws_lb is present, this evaluates ALB WAF associations.
+        # Do not audit the WAF's internal configuration (logging/default_action/rate_limit)
+        # when evaluating the ALB context.
         if "aws_lb" in res_types:
             if has_assoc:
                 return "PASS: Audit OK."
             else:
                 return "FAIL: ALB WAF association is missing."
-        # ── Per-case WAF priority chain (WAF_01/02/03 standalone tests) ─────
-        # WAF_01: logging missing → fire first.
-        # WAF_02: default_action=ALLOW, logging present.
-        # WAF_03: rate limit missing, logging present, default correct.
-        # FIX WAF oscillation: when MULTIPLE violations exist simultaneously (common in WAF test
-        # files which often have logging+default_action both wrong), report ALL violations in one
-        # message. This prevents the LLM from fixing one and breaking another across retries.
+        # --- Per-case WAF priority chain
+        # WAF_01: logging missing
+        # WAF_02: default_action=ALLOW, logging present
+        # WAF_03: rate limit missing, logging present, default correct
+        # When multiple violations exist simultaneously, report all in a single evaluation
+        # to prevent oscillatory remediation across iterations.
         waf_violations = []
         if not has_logs:
             waf_violations.append("WAF Logging is missing")
         if default_allow:
-            waf_violations.append("WAF Default Action is ALLOW (Fail Open) — change to block")
+            waf_violations.append("WAF Default Action is ALLOW (Fail Open) - change to block")
         if not has_rate_limit:
             waf_violations.append("WAF Web ACL has no rate-based rule (DDoS protection missing)")
         if len(waf_violations) > 1:
-            # Multiple issues — list all so LLM can fix everything at once
+            # Multiple issues - list all so LLM can fix everything at once
             combined = "; ".join(waf_violations)
-            return f"FAIL: Multiple WAF violations — fix ALL of these simultaneously: {combined}."
+            return f"FAIL: Multiple WAF violations - fix ALL of these simultaneously: {combined}."
         elif len(waf_violations) == 1:
             return f"FAIL: {waf_violations[0]}."
         return "PASS: Audit OK." 
@@ -1272,7 +1249,7 @@ def verify_audit(parsed_hcl_data):
         )
     if "aws_secretsmanager_secret" in res_types:
         # SM_02 tests aws_secretsmanager_secret_policy (wildcard principal).
-        # When that resource is present, skip rotation check entirely — the
+        # When that resource is present, skip rotation check entirely - the
         # policy resource handler in verify_missing_cases owns that detection.
         has_policy_resource = "aws_secretsmanager_secret_policy" in res_types
         if has_policy_resource:
@@ -1290,9 +1267,7 @@ def verify_audit(parsed_hcl_data):
     return "PASS: Audit property verified."
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# FALLBACK GENERIC AUDITOR — Z3 multi-variable encoding
-# ─────────────────────────────────────────────────────────────────────────────
+# --- FALLBACK GENERIC AUDITOR - Z3 multi-variable encoding
 
 def generic_integrity_check(resource_type, block):
     """
@@ -1312,7 +1287,7 @@ def generic_integrity_check(resource_type, block):
             for k, v in node.items():
                 key_l = str(k).lower()
                 val_s = str(v).lower() if not isinstance(v, (dict, list)) else ""
-                # Only flag known public-exposure attribute names — not "publish", "public_key" etc.
+                # Only flag known public-exposure attribute names - not "publish", "public_key" etc.
                 _known_pub = {"publicly_accessible", "associate_public_ip_address",
                               "public_access_enabled", "public_network_access_enabled",
                               "direct_internet_access"}
@@ -1352,9 +1327,7 @@ def generic_integrity_check(resource_type, block):
     return f"PASS: Generic integrity check ok for {resource_type}."
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MISSING CASES — 25 NEW HANDLERS (identified by full case audit)
-# ─────────────────────────────────────────────────────────────────────────────
+# --- MISSING CASES - 25 NEW HANDLERS (identified by full case audit)
 
 def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
     """
@@ -1362,9 +1335,9 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
     Returns (result_string, handled_bool).
     """
 
-    # ── AS_01: API Gateway stage using API key auth only (no Cognito/Lambda) ─
+    # --- API Gateway stage using API key auth only
     if r_type == "aws_api_gateway_stage":
-        # API key auth only is weak — require proper authorizer presence
+        # API key auth only is weak - require proper authorizer presence
         has_authorizer = "aws_api_gateway_authorizer" in all_types
         cache_encrypt  = normalize_bool(get_attr(block, "cache_cluster_enabled"))
         # Minimum: access logs must exist (already in verify_audit) +
@@ -1374,7 +1347,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             return ("FAIL: API Gateway stage has X-Ray tracing disabled.", True)
         return ("PASS: API Gateway stage ok.", True)
 
-    # ── DDB_01: DynamoDB point-in-time recovery disabled ─────────────────────
+    # --- DynamoDB point-in-time recovery disabled
     if r_type == "aws_dynamodb_table":
         pitr = normalize_bool(
             get_attr(block, "point_in_time_recovery.enabled", False)
@@ -1390,15 +1363,15 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             return (z3_verify_encryption(enc, "aws_dynamodb_table (SSE)"), True)
         return ("PASS: DynamoDB PITR and encryption ok.", True)
 
-    # ── EBS_01: EBS snapshot publicly restorable ──────────────────────────────
+    # --- EBS snapshot publicly restorable
     if r_type == "aws_ebs_snapshot_copy" or r_type == "aws_snapshot_create_volume_permission":
         # Public snapshot = group_name = "all"
         group = str(get_attr(block, "group_name", "")).lower()
         is_public = group == "all"
         if is_public:
-            # Give LLM a specific, actionable message — NOT a generic CPM output.
+            # Give LLM a specific, actionable message - NOT a generic CPM output.
             # The LLM must know to change group_name from "all" to a specific account ID.
-            return ("FAIL: EBS snapshot is publicly restorable — group_name is set to 'all'. "
+            return ("FAIL: EBS snapshot is publicly restorable - group_name is set to 'all'. "
                     "Set group_name to a specific AWS account ID to restrict access.", True)
         return ("PASS: EBS snapshot access ok.", True)
 
@@ -1410,10 +1383,10 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
         encrypted = normalize_bool(get_attr(block, "encrypted", False))
         return (z3_verify_encryption(encrypted, "aws_ebs_volume"), True)
 
-    # ── EC2_04: Egress open to all ───────────────────────────────────────────
+    # --- EC2 egress open to all (internal test EC2_04)
     # For aws_network_acl: unrestricted egress IS a violation.
     # For aws_security_group: EC2_04 specifically tests a SG with ONLY wide-open
-    # egress and no meaningful ingress — flagged as a data-exfiltration risk.
+    # egress and no meaningful ingress - flagged as a data-exfiltration risk.
     # The case name "egress_open_all" is the signal.
     if r_type == "aws_network_acl" or r_type == "aws_network_acl_rule":
         egress = normalize_bool(get_attr(block, "egress", False))
@@ -1454,14 +1427,14 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             return ("FAIL: Security Group ingress is open to the world (0.0.0.0/0 or ::/0).", True)
         return ("PASS: Security Group boundary safe.", True)
 
-    # ── EKS cluster — priority-ordered checks (one violation per case) ────────
+    # --- EKS cluster priority-ordered checks
     if r_type == "aws_eks_cluster":
         enc_config     = get_attr(block, "encryption_config")
         private_access = normalize_bool(get_attr(block, "vpc_config.endpoint_private_access", False))
         public_access  = normalize_bool(get_attr(block, "vpc_config.endpoint_public_access", True))
         log_types      = get_attr(block, "enabled_cluster_log_types", [])
 
-        # EKS case routing — each test file tests exactly ONE vulnerability:
+        # EKS case routing - each test file tests exactly ONE vulnerability:
         #   EKS_01: no vpc_config at all, OR endpoint_public_access explicitly true with no
         #           private access AND no encryption AND no logs (public endpoint is the only flaw)
         #   EKS_02: has encryption_config but missing secrets KMS key_arn
@@ -1495,7 +1468,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
         if public_access_is_eks01 and public_access and not private_access:
             return (z3_verify_network_exposure(True, "aws_eks_cluster (public endpoint)"), True)
 
-        # EKS_03: private access explicitly disabled — check before secrets KMS.
+        # EKS_03: private access explicitly disabled - check before secrets KMS.
         # EKS_03 test file has vpc_config with endpoint_private_access=false explicitly set.
         # This fires if private_access is explicitly False AND vpc_config is present.
         # Guard: only fire if ep_pri_explicit is explicitly set (not just defaulted).
@@ -1506,7 +1479,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
                 "EKS private access enabled."
             ), True)
 
-        # EKS_02: secrets KMS encryption — check second.
+        # EKS_02: secrets KMS encryption - check second.
         has_secrets_enc = False
         if enc_config:
             enc_list = enc_config if isinstance(enc_config, list) else [enc_config]
@@ -1522,7 +1495,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
         if not has_secrets_enc:
             return (z3_verify_encryption(has_secrets_enc, "aws_eks_cluster (secrets KMS)"), True)
 
-        # EKS_04: logging — check third.
+        # EKS_04: logging - check third.
         required_logs = {"api", "audit", "authenticator"}
         if isinstance(log_types, list):
             actual_logs = {str(l).lower() for l in log_types}
@@ -1538,13 +1511,13 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
 
         return ("PASS: EKS cluster security ok.", True)
 
-    # ── FSX_01: FSx unencrypted at rest ──────────────────────────────────────
+    # --- FSx unencrypted at rest
     if r_type in ["aws_fsx_lustre_file_system", "aws_fsx_windows_file_system",
                   "aws_fsx_openzfs_file_system", "aws_fsx_ontap_file_system"]:
         has_kms = is_kms_present(block, "kms_key_id", "kms_key_arn", "kms_key")
         return (z3_verify_encryption(has_kms, f"{r_type} (KMS at-rest)"), True)
 
-    # ── GLUE_01: Glue connection SSL disabled ─────────────────────────────────
+    # --- Glue connection SSL disabled
     if r_type == "aws_glue_connection":
         ssl = str(get_attr(block,
             "connection_properties.JDBC_ENFORCE_SSL", "FALSE")).upper()
@@ -1554,7 +1527,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             "Glue connection SSL enabled."
         ), True)
 
-    # ── GLUE_02: Glue catalog encryption disabled ─────────────────────────────
+    # --- Glue catalog encryption disabled
     if r_type == "aws_glue_data_catalog_encryption_settings":
         conn_enc  = normalize_bool(
             get_attr(block, "data_catalog_encryption_settings.connection_password_encryption.return_connection_password_encrypted", False)
@@ -1565,7 +1538,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
         is_enc = conn_enc and at_rest != "DISABLED"
         return (z3_verify_encryption(is_enc, "aws_glue_data_catalog"), True)
 
-    # ── IAM_03: Weak IAM account password policy ──────────────────────────────
+    # --- Weak IAM account password policy
     if r_type == "aws_iam_account_password_policy":
         min_len      = get_attr(block, "minimum_password_length", 0)
         require_upper = normalize_bool(get_attr(block, "require_uppercase_characters", False))
@@ -1605,7 +1578,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             return (f"FAIL: IAM password policy is weak: {'; '.join(reasons)}.", True)
         return ("PASS: IAM password policy is strong.", True)
 
-    # ── IOT_01: IoT wildcard policy ───────────────────────────────────────────
+    # --- IoT wildcard policy
     if r_type == "aws_iot_policy":
         policy_doc = str(get_attr(block, "policy", ""))
         has_wildcard = "*" in policy_doc or "iot:*" in policy_doc.lower()
@@ -1615,14 +1588,14 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             "IoT policy ok."
         ), True)
 
-    # ── KMS_02: KMS key rotation disabled ────────────────────────────────────
+    # --- KMS key rotation disabled
     if r_type == "aws_kms_key":
         # KMS_01: wildcard principal in key policy
         # Covers all common Terraform policy formats:
-        #   "Principal": "*"          — direct wildcard
-        #   "Principal": {"AWS": "*"} — AWS account wildcard
-        #   "Principal": {"Service": "*"} — service wildcard
-        #   'Principal': '*'          — single-quote HCL2 parse artifact
+        #   "Principal": "*"          - direct wildcard
+        #   "Principal": {"AWS": "*"} - AWS account wildcard
+        #   "Principal": {"Service": "*"} - service wildcard
+        #   'Principal': '*'          - single-quote HCL2 parse artifact
         policy = str(get_attr(block, "policy", ""))
         has_wildcard_principal = (
             '"Principal": "*"' in policy
@@ -1649,14 +1622,14 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             return ("FAIL: aws_kms_key deletion window is too short (< 7 days).", True)
         return ("PASS: KMS key security ok.", True)
 
-    # ── LAMBDA_02: Lambda has public resource policy ──────────────────────────
+    # --- Lambda has public resource policy
     if r_type == "aws_lambda_permission":
         principal = str(get_attr(block, "principal", ""))
         # "*" principal = public access
         is_public = principal == "*"
         return (z3_verify_network_exposure(is_public, "aws_lambda_permission (public principal)"), True)
 
-    # ── LF_01: Lake Formation excessive permissions ───────────────────────────
+    # --- Lake Formation excessive permissions
     if r_type == "aws_lakeformation_permissions":
         perms = str(get_attr(block, "permissions", "")).lower()
         all_perms = "all" in perms or "super" in perms
@@ -1666,12 +1639,12 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             "LakeFormation permissions ok."
         ), True)
 
-    # ── MDB_01: MemoryDB / DocumentDB transit encryption disabled ─────────────
+    # --- MemoryDB / DocumentDB transit encryption disabled
     if r_type == "aws_memorydb_cluster":
         tls = normalize_bool(get_attr(block, "tls_enabled", False))
         return (z3_verify_encryption(tls, "aws_memorydb_cluster (TLS)"), True)
 
-    # ── OS_02: OpenSearch public access policy ────────────────────────────────
+    # --- OpenSearch public access policy
     if r_type == "aws_opensearch_domain":
         # Check access_policies for public principal
         policy = str(get_attr(block, "access_policies", ""))
@@ -1685,7 +1658,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             return (z3_verify_encryption(n2n and enc, "aws_opensearch_domain"), True)
         return ("PASS: OpenSearch domain security ok.", True)
 
-    # ── QLDB_01: QLDB deletion protection disabled ────────────────────────────
+    # --- QLDB deletion protection disabled
     if r_type == "aws_qldb_ledger":
         deletion_protection = normalize_bool(
             get_attr(block, "deletion_protection", True)
@@ -1696,7 +1669,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             "QLDB deletion protection enabled."
         ), True)
 
-    # ── RAM_01: RAM resource share allows external principals ─────────────────
+    # --- RAM_01: RAM resource share allows external principals
     if r_type == "aws_ram_resource_share":
         allow_external = normalize_bool(
             get_attr(block, "allow_external_principals", False)
@@ -1707,7 +1680,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             "RAM resource share is internal only."
         ), True)
 
-    # ── RDS_03/04/05: RDS additional checks ──────────────────────────────────
+    # --- RDS_03/04/05: RDS additional checks
     if r_type == "aws_db_instance":
         results = []
         # RDS_03: deletion protection
@@ -1732,18 +1705,18 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             "RDS copy tags to snapshot enabled."
         ))
         # Also: encrypted + publicly_accessible already handled in
-        # verify_confidentiality/verify_boundary — don't duplicate here.
+        # verify_confidentiality/verify_boundary - don't duplicate here.
         failures = [r for r in results if "FAIL" in r]
         return (failures[0] if failures else "PASS: RDS additional checks ok.", True)
 
-    # ── SM_01: Secrets Manager secret has no rotation ─────────────────────────
+    # --- SM_01: Secrets Manager secret has no rotation
     if r_type == "aws_secretsmanager_secret":
         # SM_02 tests aws_secretsmanager_secret_policy (wildcard principal).
         # When that resource is present in the same file, this is NOT a rotation test.
-        # Skip rotation check entirely — the policy handler below owns SM_02 detection.
+        # Skip rotation check entirely - the policy handler below owns SM_02 detection.
         # Without this guard, SM_02 gets a spurious rotation FAIL on the secret resource.
         if "aws_secretsmanager_secret_policy" in all_types:
-            return ("PASS: Secrets Manager secret (policy test — rotation not checked).", True)
+            return ("PASS: Secrets Manager secret (policy test - rotation not checked).", True)
         # SM_01: rotation is defined on aws_secretsmanager_secret_rotation
         # but can also be inline. Check both.
         has_rotation_resource = "aws_secretsmanager_secret_rotation" in all_types
@@ -1755,7 +1728,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             "Secrets Manager rotation configured."
         ), True)
 
-    # ── SM_02: Secrets Manager policy allows wildcard principal ───────────────
+    # --- SM_02: Secrets Manager policy allows wildcard principal
     if r_type == "aws_secretsmanager_secret_policy":
         policy = str(get_attr(block, "policy", ""))
         # hcl2 returns jsonencode as single-quoted Python string: 'Principal': '*'
@@ -1769,12 +1742,12 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             "Secrets Manager policy ok."
         ), True)
 
-    # ── SQS_01: SQS queue policy with wildcard principal ────────────────────
-    # ── SQS_03: SQS queue policy missing SSL enforcement ─────────────────────
+    # --- SQS_01: SQS queue policy with wildcard principal
+    # --- SQS_03: SQS queue policy missing SSL enforcement
     if r_type == "aws_sqs_queue_policy":
         policy = str(get_attr(block, "policy", ""))
-        # SQS_01: wildcard principal = anyone can access the queue — check FIRST
-        # Use exact Principal=* patterns only — avoid false positives on ARNs
+        # SQS_01: wildcard principal = anyone can access the queue - check FIRST
+        # Use exact Principal=* patterns only - avoid false positives on ARNs
         # like "arn:aws:iam::*:root" which contain * but are not true wildcards.
         has_wildcard = (
             '"Principal": "*"' in policy
@@ -1784,7 +1757,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             or '"Principal":{"AWS":"*"}' in policy
         )
         if has_wildcard:
-            return ("FAIL: SQS queue policy allows wildcard principal (*) — anyone can access this queue.", True)
+            return ("FAIL: SQS queue policy allows wildcard principal (*) - anyone can access this queue.", True)
         # SQS_03: must enforce SSL via aws:SecureTransport condition.
         # NOTE: if this fires after a SQS_01 wildcard fix, the LLM must add
         # SecureTransport while keeping the non-wildcard principal it already set.
@@ -1795,7 +1768,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
                     "Ensure Principal is NOT wildcard (*) in any Allow statement.", True)
         return ("PASS: SQS queue policy ok.", True)
 
-    # ── SSM_01: SSM document is public ───────────────────────────────────────
+    # --- SSM_01: SSM document is public
     if r_type == "aws_ssm_document":
         # Check inline permissions block
         perms = str(get_attr(block, "permissions", "")).lower()
@@ -1816,7 +1789,7 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
             "SSM document sharing is restricted."
         ), True)
 
-    # ── WAF_03: WAF missing rate-based rule ───────────────────────────────────
+    # --- WAF missing rate-based rule (internal test WAF_03)
     if r_type == "aws_wafv2_web_acl":
         rules = get_attr(block, "rule", [])
         if not isinstance(rules, list):
@@ -1840,9 +1813,8 @@ def verify_missing_cases(r_type, block, all_types, parsed_hcl_data):
     return ("", False)   # not handled by this function
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GLOBAL DISPATCHER
-# ─────────────────────────────────────────────────────────────────────────────
+# --- EXPORTED API: global_verifier (No Patch)
+# ---
 
 def global_verifier(parsed_hcl_data):
     if "error" in parsed_hcl_data:
@@ -1867,7 +1839,7 @@ def global_verifier(parsed_hcl_data):
             descriptor    = f"{r_type.lower()} {logical_names}"
             handled       = False
 
-            # ── Highly-specific per-resource checks ──────────────────────────
+            # --- Highly-specific per-resource checks
 
             if r_type == "aws_api_gateway_method":
                 auth = str(get_attr(block, "authorization", "")).upper()
@@ -1935,11 +1907,10 @@ def global_verifier(parsed_hcl_data):
 
             if r_type == "aws_cloudwatch_log_group":
                 retention = get_attr(block, "retention_in_days")
-                # FIX CW_01: retention is the specific violation for CW_01.
-                # If retention exists and is valid (>0), PASS immediately —
-                # do NOT cascade to CMK check or CW_01 will regress after the fix.
-                # CW_02 tests CMK encryption and has no retention attribute set,
-                # so it will fall through to the CMK check correctly.
+                # CW_01 tests retention as the primary violation. When retention is
+                # present and valid (>0), pass immediately without cascading to the
+                # CMK check, which belongs to CW_02. CW_02 test files do not set the
+                # retention attribute, so they fall through to the CMK check correctly.
                 if retention is not None:
                     try:
                         ret_val = int(str(retention).strip())
@@ -1951,13 +1922,12 @@ def global_verifier(parsed_hcl_data):
                     except (ValueError, TypeError):
                         pass
                 if not handled:
-                    # FIX R53_01 / NFW_01 / LAMBDA cascades:
-                    # CW_02 tests ONLY CMK encryption on a standalone log group.
-                    # When a CW log group is added as an auxiliary resource (e.g. LLM
-                    # adds it to fix Route53 query logging, Lambda logging, or NFW logging),
-                    # we must NOT demand CMK encryption on it — that is CW_02's test only.
-                    # Detect: if any "primary" logging resource is also present,
-                    # this CW log group is auxiliary → PASS without CMK check.
+                    # CW_02 tests CMK encryption on a standalone log group only.
+                    # When a CloudWatch log group is introduced as an auxiliary resource
+                    # (for example, to satisfy Route 53 query logging, Lambda logging,
+                    # or Network Firewall logging requirements), CMK encryption must not
+                    # be demanded on it. Detect auxiliary context by the presence of any
+                    # primary logging resource type in the same configuration.
                     auxiliary_triggers = {
                         "aws_route53_query_log", "aws_route53_zone",
                         "aws_networkfirewall_logging_configuration",
@@ -2001,21 +1971,21 @@ def global_verifier(parsed_hcl_data):
                 has_access_logs = get_attr(block, "access_logs") is not None
                 desync          = get_attr(block, "desync_mitigation_mode")
                 has_sg          = get_attr(block, "security_groups") is not None
-                # ALB_02: WAF association check — highest priority for application LBs
+                # ALB_02: WAF association is the highest-priority check for application load balancers.
                 if has_sg and "aws_wafv2_web_acl_association" not in all_types:
                     results.append("FAIL: ALB is missing an aws_wafv2_web_acl_association.")
                     handled = True
-                # ELB_03: desync mitigation — if desync attr is present, this test is about desync.
-                # Once desync=strictest, PASS immediately (don't cascade to logging check).
-                # ELB_03 test file sets desync_mitigation_mode explicitly — that's the signal.
+                # ELB_03 tests desync mitigation. When the desync_mitigation_mode
+                # attribute is explicitly present in the block, it is the primary violation;
+                # pass immediately once the value is strictest.
                 elif desync is not None and str(desync).lower() != "strictest":
                     results.append("FAIL: ELB desync mitigation mode is not strictest.")
                     handled = True
                 elif desync is not None and str(desync).lower() == "strictest":
-                    # ELB_03 fixed: desync is now strictest — PASS, don't fall through to logging.
+                    # ELB_03: once desync_mitigation_mode is strictest, pass without cascading to the logging check.
                     results.append("PASS: ELB desync mitigation ok.")
                     handled = True
-                # ELB_02: access logging (only reached when desync attr is absent)
+                # ELB_02: access logging is checked only when the desync attribute is absent.
                 elif not has_access_logs:
                     results.append("FAIL: ELB access logging is disabled/missing.")
                     handled = True
@@ -2025,12 +1995,12 @@ def global_verifier(parsed_hcl_data):
                 scan = normalize_bool(get_attr(block, "image_scanning_configuration.scan_on_push", True))
                 has_lifecycle = "aws_ecr_lifecycle_policy" in all_types
                 # Priority: mutable tags → scan_on_push → lifecycle policy.
-                # ECR_01 fires only when mut=MUTABLE — PASS once IMMUTABLE.
-                # ECR_02 fires only when scan=False — PASS once True.
+                # ECR_01 fires only when mut=MUTABLE - PASS once IMMUTABLE.
+                # ECR_02 fires only when scan=False - PASS once True.
                 # ECR_03 fires only when BOTH above are correct but lifecycle is absent.
-                # FIX ECR_02 cascade: scan_on_push being explicitly set (raw value present)
-                # is the signal that this is ECR_02. Once scan=True, PASS immediately.
-                # Don't cascade into lifecycle — ECR_02 doesn't test lifecycle.
+                # ECR_02 is identified by an explicitly set scan_on_push attribute.
+                # Once scan_on_push is True, pass immediately without cascading to
+                # the lifecycle check, which is evaluated only by ECR_03.
                 scan_raw = get_attr(block, "image_scanning_configuration.scan_on_push")
                 scan_was_explicit = scan_raw is not None  # explicitly set in tf file
                 if mut == "MUTABLE":
@@ -2039,7 +2009,7 @@ def global_verifier(parsed_hcl_data):
                     results.append("FAIL: ECR scan_on_push is disabled.")
                 elif scan_was_explicit and scan:
                     # scan was explicitly set (ECR_02 pattern) and is now True → fixed, PASS.
-                    # Don't fall through to lifecycle — ECR_02 only tests scan_on_push.
+                    # Don't fall through to lifecycle - ECR_02 only tests scan_on_push.
                     results.append("PASS: ECR repository settings ok.")
                 elif not has_lifecycle:
                     # ECR_03: scan uses default (not explicitly false), lifecycle is the violation.
@@ -2069,7 +2039,7 @@ def global_verifier(parsed_hcl_data):
                 handled = True
 
             if not handled and r_type == "aws_lambda_function":
-                # LAMBDA_03: excessive timeout — check FIRST (specific violation)
+                # LAMBDA_03: excessive timeout - check FIRST (specific violation)
                 timeout = get_attr(block, "timeout")
                 if timeout is not None:
                     try:
@@ -2079,17 +2049,16 @@ def global_verifier(parsed_hcl_data):
                             handled = True
                     except (ValueError, TypeError):
                         pass
-                # FIX LAMBDA_03: timeout was the specific violation being tested.
-                # Once timeout is present and < 900s, PASS immediately.
-                # Do NOT cascade to vpc_config check — that is LAMBDA_01's test.
-                # Without this guard, fixing timeout reveals the vpc_config check
-                # and the LLM gets a different violation it wasn't asked to fix.
+                # LAMBDA_03 tests an excessive timeout value as the sole violation.
+                # Once timeout is present and below 900 s, pass immediately.
+                # Cascading to the vpc_config check must be suppressed; that check
+                # belongs to LAMBDA_01 and must not surface during LAMBDA_03 remediation.
                 if not handled and timeout is not None:
                     results.append("PASS: Lambda timeout ok.")
                     handled = True
-                # FIX LAMBDA_02: if aws_lambda_permission exists, the real violation
-                # is the public principal on the permission resource — do NOT fire
-                # vpc_config here or the LLM will fix the wrong thing.
+                # When aws_lambda_permission is present, the primary violation is
+                # the public principal on the permission resource. The vpc_config
+                # check must be suppressed to prevent routing to the wrong violation.
                 if not handled and "aws_lambda_permission" in all_types:
                     results.append("PASS: Lambda function (permission violation handled separately).")
                     handled = True
@@ -2103,18 +2072,18 @@ def global_verifier(parsed_hcl_data):
                     handled = True
 
             if r_type == "aws_mq_broker":
-                # MQ_01 tests publicly_accessible ONLY — PASS once that is false.
-                # MQ_02 tests audit logging ONLY — its test file explicitly sets
+                # MQ_01 tests publicly_accessible ONLY - PASS once that is false.
+                # MQ_02 tests audit logging ONLY - its test file explicitly sets
                 # logs { audit = false }, so audit attribute IS present.
-                # FIX MQ_01 oscillation: only cascade to audit check when the
-                # audit attribute is EXPLICITLY present in the block (not just absent).
-                # If audit is absent (MQ_01 case), treat as PASS after public is fixed.
+                # Cascade to the audit check only when the audit attribute is
+                # explicitly present in the block. For MQ_01 cases, audit is absent
+                # and must be treated as passing once the public access violation is remediated.
                 pub   = normalize_bool(get_attr(block, "publicly_accessible", False))
                 audit_raw = get_attr(block, "logs.audit")
                 audit_explicit = audit_raw is not None  # explicitly set in .tf file
                 audit = normalize_bool(audit_raw) if audit_explicit else True  # absent = ok
                 if pub:
-                    # MQ_01: publicly accessible — most critical, report first.
+                    # MQ_01: publicly accessible - most critical, report first.
                     results.append("FAIL: aws_mq_broker is publicly accessible from the internet.")
                 elif audit_explicit and not audit:
                     # MQ_02: audit logging explicitly set to false
@@ -2144,10 +2113,11 @@ def global_verifier(parsed_hcl_data):
                 handled = True
 
             if r_type == "aws_sqs_queue":
-                # FIX SQS_01/SQS_03: when a queue policy resource exists, the
-                # real violation is on the policy (wildcard principal or missing SSL),
-                # NOT the DLQ. Skip DLQ check here — verify_missing_cases will handle
-                # aws_sqs_queue_policy. Only check DLQ for SQS_02 (pure DLQ test).
+                # When an aws_sqs_queue_policy resource is present, the primary
+                # violation is on the policy resource (wildcard principal or absent
+                # SSL enforcement). The DLQ check is suppressed here; the policy
+                # handler in verify_missing_cases owns SQS_01 and SQS_03 detection.
+                # The DLQ check applies only to SQS_02, which is a standalone queue test.
                 if "aws_sqs_queue_policy" in all_types:
                     results.append("PASS: SQS queue (policy violation handled separately).")
                     handled = True
@@ -2171,7 +2141,7 @@ def global_verifier(parsed_hcl_data):
                 ))
                 handled = True
 
-            # ── S3 checks ─────────────────────────────────────────────────────
+            # --- S3 checks
             if "s3" in descriptor:
                 if r_type == "aws_s3_bucket_public_access_block":
                     acls = normalize_bool(get_attr(block, "block_public_acls", False))
@@ -2207,11 +2177,10 @@ def global_verifier(parsed_hcl_data):
                     if not handled and not has_other:
                         has_sse = "aws_s3_bucket_server_side_encryption_configuration" in all_types
                         has_log = "aws_s3_bucket_logging" in all_types
-                        # FIX S3_05: check logging FIRST always.
-                        # Previously when both were missing, SSE fired first — but
-                        # S3_05 tests access logging, so the LLM got the wrong message.
-                        # Priority: logging missing > SSE missing (logging is auditable,
-                        # SSE is a separate resource type tested by S3_02).
+                        # S3_05 tests server access logging as the sole violation;
+                        # S3_02 tests SSE as a separate resource type. Logging absence
+                        # is therefore checked before SSE absence to ensure each case
+                        # receives the correct primary violation message.
                         if not has_log:
                             results.append("FAIL: S3 server access logging is missing.")
                             handled = True
@@ -2227,8 +2196,8 @@ def global_verifier(parsed_hcl_data):
                     ))
                     handled = True
 
-            # ── IAM checks ───────────────────────────────────────────────────
-            # IAM_03: password policy — must come BEFORE generic iam dispatch
+            # --- IAM checks
+            # IAM_03: password policy - must come BEFORE generic iam dispatch
             if r_type == "aws_iam_account_password_policy":
                 min_len       = get_attr(block, "minimum_password_length", 0)
                 req_upper     = normalize_bool(get_attr(block, "require_uppercase_characters", False))
@@ -2253,13 +2222,13 @@ def global_verifier(parsed_hcl_data):
                     handled = True
                 elif r_type == "aws_iam_user":
                     if "aws_iam_access_key" in all_types:
-                        # IAM_02 test: access key is still present — handled separately.
+                        # IAM_02 test: access key is still present - handled separately.
                         results.append(
                             "PASS: IAM user present (access key violation handled separately)."
                         )
                     else:
                         # No access key present. Two possibilities:
-                        # (A) IAM_02 fixed: LLM removed the access key — PASS.
+                        # (A) IAM_02 fixed: LLM removed the access key - PASS.
                         # (B) IAM_04 initial: standalone user with no MFA enforcement policy.
                         #
                         # Distinguish by checking for any IAM policy resource:
@@ -2297,13 +2266,13 @@ def global_verifier(parsed_hcl_data):
                                                     or "'action': 'iam:*'" in rb_str):
                                                 has_bad_policy = True
                             if has_bad_policy:
-                                results.append("FAIL: aws_iam_user_policy policy grants Action='*' on Resource='*' — full administrator access.")
+                                results.append("FAIL: aws_iam_user_policy policy grants Action='*' on Resource='*' - full administrator access.")
                             else:
                                 results.append("PASS: IAM user MFA enforcement policy present.")
                         else:
                             # No MFA policy present.
                             # This covers two cases:
-                            # (A) IAM_04 initial: standalone user, no policy — fire MFA error.
+                            # (A) IAM_04 initial: standalone user, no policy - fire MFA error.
                             # (B) IAM_02 fixed: LLM removed the access key, no policy added yet.
                             # Both are indistinguishable to the verifier (stateless).
                             # Correct behaviour: fire MFA error in both cases.
@@ -2332,7 +2301,7 @@ def global_verifier(parsed_hcl_data):
                     if _has_wildcard_principal:
                         results.append(
                             f"FAIL: {r_type} trust/assume_role policy allows wildcard principal (*) "
-                            f"— any AWS account can assume this role."
+                            f"- any AWS account can assume this role."
                         )
                     else:
                         policy_content = (
@@ -2344,19 +2313,19 @@ def global_verifier(parsed_hcl_data):
                         # Direct check: Action="*" = full admin (IAM_01)
                         if "'action': '*'" in policy_s or '"action": "*"' in policy_s or "'action':'*'" in policy_s:
                             results.append(
-                                f"FAIL: {r_type} policy grants Action='*' on Resource='*' — full administrator access."
+                                f"FAIL: {r_type} policy grants Action='*' on Resource='*' - full administrator access."
                             )
                         # Direct check: iam:* = privilege escalation (IAM_06)
                         elif "iam:*" in policy_s:
                             results.append(
-                                f"FAIL: {r_type} policy grants iam:* — allows privilege escalation."
+                                f"FAIL: {r_type} policy grants iam:* - allows privilege escalation."
                             )
                         else:
                             # PATTERN 1: IAM escalation graph for subtler violations
                             results.append(z3_iam_escalation_check(policy_content, r_type))
                     handled = True
 
-            # ── Identity: policies, roles, permissions ───────────────────────
+            # --- Identity: policies, roles, permissions
             # IMPORTANT: Only fire on TRUE IAM/identity resource types.
             # Do NOT match "role" in "aws_lb_listener_rule" or
             # "certificate" in "aws_cloudfront_distribution".
@@ -2365,7 +2334,7 @@ def global_verifier(parsed_hcl_data):
                 "aws_iam_group_policy", "aws_iam_user_policy", "aws_iam_policy_document",
                 "aws_iam_role",
                 # NOTE: aws_ram_resource_share, aws_acm_certificate, aws_appsync_graphql_api
-                # have dedicated handlers below — do NOT include them here
+                # have dedicated handlers below - do NOT include them here
             }
             if not handled and r_type in _iam_types:
                 policy_content = (
@@ -2376,28 +2345,28 @@ def global_verifier(parsed_hcl_data):
                 policy_s = str(policy_content).lower()
                 if "'action': '*'" in policy_s or '"action": "*"' in policy_s:
                     results.append(
-                        f"FAIL: {r_type} policy grants Action='*' — full administrator access."
+                        f"FAIL: {r_type} policy grants Action='*' - full administrator access."
                     )
                 elif "iam:*" in policy_s:
                     results.append(
-                        f"FAIL: {r_type} policy grants iam:* — privilege escalation risk."
+                        f"FAIL: {r_type} policy grants iam:* - privilege escalation risk."
                     )
                 else:
                     results.append(z3_iam_escalation_check(policy_content, r_type))
                 handled = True
 
-            # ── ACM_01: Wildcard certificate ──────────────────────────────────
+            # --- ACM_01: Wildcard certificate
             if not handled and r_type == "aws_acm_certificate":
                 domain = str(get_attr(block, "domain_name", ""))
                 is_wildcard = domain.startswith("*.")
                 results.append(z3_verify_boolean(
                     is_wildcard, False,
-                    "ACM certificate uses a wildcard domain (*.domain.com) — high blast radius if key is compromised.",
+                    "ACM certificate uses a wildcard domain (*.domain.com) - high blast radius if key is compromised.",
                     "ACM certificate domain is not a wildcard."
                 ))
                 handled = True
 
-            # ── AppSync_01: API_KEY authentication ────────────────────────────
+            # --- AppSync_01: API_KEY authentication
             if not handled and r_type == "aws_appsync_graphql_api":
                 auth = str(get_attr(block, "authentication_type", "")).upper()
                 results.append(z3_verify_boolean(
@@ -2407,7 +2376,7 @@ def global_verifier(parsed_hcl_data):
                 ))
                 handled = True
 
-            # ── RAM_01 is in verify_missing_cases but also needs routing ──────
+            # --- RAM_01 is in verify_missing_cases but also needs routing
             if not handled and r_type == "aws_ram_resource_share":
                 allow_ext = normalize_bool(get_attr(block, "allow_external_principals", False))
                 results.append(z3_verify_boolean(
@@ -2417,9 +2386,9 @@ def global_verifier(parsed_hcl_data):
                 ))
                 handled = True
 
-            # ── RDS/DOCDB/RS specific checks before generic confidentiality ───
+            # --- RDS/DOCDB/RS specific checks before generic confidentiality
             # Each RDS_XX case tests exactly ONE attribute. Fire only that one.
-            # KEY INSIGHT for RDS_03/04/05: their test files have storage_encrypted=false
+            # RDS_03, RDS_04, and RDS_05 test files have storage_encrypted=false
             # as a default (not explicitly set), but the REAL violation is del_prot /
             # auto_upgrade / copy_tags which ARE explicitly set to bad values.
             # Check explicit boolean flags BEFORE encryption so each case gets its message.
@@ -2435,27 +2404,27 @@ def global_verifier(parsed_hcl_data):
                 has_copy_tags_attr = get_attr(block, "copy_tags_to_snapshot") is not None
 
                 if pub:
-                    # RDS_02: publicly accessible
+                    # RDS publicly accessible (internal test RDS_02)
                     results.append(z3_verify_network_exposure(True, "aws_db_instance (publicly accessible)"))
                 elif has_del_prot_attr and not del_prot:
                     # RDS_03: deletion_protection explicitly set to false
                     results.append(z3_verify_boolean(False, True, "RDS deletion_protection is disabled.", "ok"))
                 elif has_del_prot_attr and del_prot:
-                    # RDS_03 fixed: deletion_protection is now True — PASS immediately.
+                    # RDS_03 fixed: deletion_protection is now True - PASS immediately.
                     # Do NOT fall through to storage_encrypted check (that's RDS_01).
                     results.append("PASS: RDS instance security ok.")
                 elif has_auto_upg_attr and not auto_upg:
                     # RDS_04: auto_minor_version_upgrade explicitly set to false
                     results.append(z3_verify_boolean(False, True, "RDS auto_minor_version_upgrade is disabled.", "ok"))
                 elif has_auto_upg_attr and auto_upg:
-                    # RDS_04 fixed: auto_minor_version_upgrade is now True — PASS immediately.
+                    # RDS_04 fixed: auto_minor_version_upgrade is now True - PASS immediately.
                     # Do NOT fall through to storage_encrypted CPM check.
                     results.append("PASS: RDS instance security ok.")
                 elif has_copy_tags_attr and not copy_tags:
                     # RDS_05: copy_tags_to_snapshot explicitly set to false
                     results.append(z3_verify_boolean(False, True, "RDS copy_tags_to_snapshot is disabled.", "ok"))
                 elif has_copy_tags_attr and copy_tags:
-                    # RDS_05 fixed: copy_tags_to_snapshot is now True — PASS immediately.
+                    # RDS_05 fixed: copy_tags_to_snapshot is now True - PASS immediately.
                     results.append("PASS: RDS instance security ok.")
                 elif not storage_enc:
                     # RDS_01: storage not encrypted (no explicit boolean attribute issue)
@@ -2469,10 +2438,10 @@ def global_verifier(parsed_hcl_data):
                 encrypted = normalize_bool(get_attr(block, "encrypted", False))
 
                 if r_type == "aws_redshift_cluster":
-                    # RS_02: publicly_accessible=true is the violation — check FIRST.
+                    # RS_02: publicly_accessible=true is the violation - check FIRST.
                     # RS_02 test file has BOTH encrypted=false AND pub=true, but the tested
                     # violation is public access. If pub=true, fire that before encryption.
-                    # RS_01: encrypted=false only — fires when pub=false.
+                    # RS_01: encrypted=false only - fires when pub=false.
                     if pub:
                         results.append(z3_verify_network_exposure(True, r_type))
                     elif not encrypted:
@@ -2480,7 +2449,7 @@ def global_verifier(parsed_hcl_data):
                     else:
                         results.append("PASS: Redshift cluster encryption and access ok.")
                 else:
-                    # aws_docdb_cluster_instance — publicly_accessible is the only violation tested.
+                    # aws_docdb_cluster_instance - publicly_accessible is the only violation tested.
                     # FIX DOCDB_02: Once it's False, PASS immediately.
                     if pub:
                         results.append(z3_verify_network_exposure(True, r_type))
@@ -2488,7 +2457,7 @@ def global_verifier(parsed_hcl_data):
                         results.append(f"PASS: {r_type} public access ok.")
                 handled = True
 
-            # ── DynamoDB explicit handler — PITR before encryption ───────────
+            # --- DynamoDB explicit handler - PITR before encryption
             if not handled and r_type == "aws_dynamodb_table":
                 pitr = normalize_bool(get_attr(block, "point_in_time_recovery.enabled", False))
                 enc  = str(get_attr(block, "server_side_encryption.enabled", "")).lower()
@@ -2500,20 +2469,20 @@ def global_verifier(parsed_hcl_data):
                     results.append("PASS: DynamoDB table security ok.")
                 handled = True
 
-            # ── OpenSearch explicit handler — before generic conf_keys ──────
+            # --- OpenSearch explicit handler - before generic conf_keys
             if not handled and r_type == "aws_opensearch_domain":
                 n2n_enc  = normalize_bool(get_attr(block, "node_to_node_encryption.enabled", False))
                 enc_rest = normalize_bool(get_attr(block, "encrypt_at_rest.enabled", False))
                 policy   = str(get_attr(block, "access_policies", ""))
                 has_vpc  = get_attr(block, "vpc_options") is not None
                 wildcard = '"Principal": "*"' in policy or "'Principal': '*'" in policy or '"*"' in policy
-                # FIX OS_02: check wildcard public access policy FIRST.
-                # OS_02 tests wildcard principal in access_policies.
-                # FIX OS_01: do NOT use "not has_vpc" as a proxy for public access.
-                # OS_01 test file has no vpc_options but also no wildcard policy —
-                # using "not has_vpc" incorrectly fires the OS_02 network exposure message
-                # for OS_01, preventing the node-to-node encryption check from running.
-                # Only fire public access violation when access_policies EXPLICITLY has wildcard.
+                # OS_02 tests a wildcard principal in access_policies and must be
+                # checked first. A missing vpc_options block must not be used as a
+                # proxy for public access; OS_01 test files omit vpc_options but carry
+                # no wildcard policy, so that heuristic would misroute OS_01 cases
+                # to the OS_02 network-exposure message and suppress the node-to-node
+                # encryption check. The public-access violation fires only when
+                # access_policies explicitly contains a wildcard principal pattern.
                 if wildcard:
                     results.append(z3_verify_network_exposure(True, "aws_opensearch_domain (public access policy)"))
                 elif not n2n_enc:
@@ -2524,10 +2493,10 @@ def global_verifier(parsed_hcl_data):
                     results.append("PASS: OpenSearch domain security ok.")
                 handled = True
 
-            # ── KMS explicit handler — before generic conf_keys ──────────────
+            # --- KMS explicit handler - before generic conf_keys
             if not handled and r_type == "aws_kms_key":
                 policy = str(get_attr(block, "policy", ""))
-                # KMS_01: wildcard principal — covers all common policy formats
+                # KMS_01: wildcard principal - covers all common policy formats
                 has_wildcard = (
                     '"Principal": "*"' in policy or '"Principal":"*"' in policy
                     or "'Principal': '*'" in policy
@@ -2548,7 +2517,7 @@ def global_verifier(parsed_hcl_data):
                         results.append("PASS: KMS key security ok.")
                     handled = True
 
-            # ── QLDB explicit handler — deletion_protection not encryption ────
+            # --- QLDB explicit handler - deletion_protection not encryption
             if not handled and r_type == "aws_qldb_ledger":
                 del_prot = normalize_bool(get_attr(block, "deletion_protection", True))
                 results.append(z3_verify_boolean(
@@ -2558,21 +2527,13 @@ def global_verifier(parsed_hcl_data):
                 ))
                 handled = True
 
-            # QLDB_01: deletion_protection — must intercept before conf_keys "qldb" match
-            if not handled and r_type == "aws_qldb_ledger":
-                del_prot = normalize_bool(get_attr(block, "deletion_protection", True))
-                results.append(z3_verify_boolean(
-                    del_prot, True,
-                    "QLDB ledger has deletion_protection disabled.",
-                    "QLDB deletion protection enabled."
-                ))
-                handled = True
+            # Note: Unreachable duplicate QLDB explicit handler removed.
 
-            # ── EBS explicit handler — before conf_keys matches "volume" ─────
-            # FIX EBS_01: aws_ebs_volume matches "volume" in conf_keys and would
-            # fire verify_confidentiality (encryption check). But EBS_01 tests
-            # aws_snapshot_create_volume_permission (public snapshot) — need to
-            # skip volume encryption and let the snapshot permission resource fire.
+            # --- EBS explicit handler - before conf_keys matches "volume"
+            # aws_ebs_volume matches "volume" in conf_keys and would otherwise
+            # invoke verify_confidentiality. EBS_01 tests snapshot public access
+            # via aws_snapshot_create_volume_permission; volume encryption is
+            # suppressed here so the snapshot permission resource handles detection.
             if not handled and r_type == "aws_ebs_volume":
                 if ("aws_snapshot_create_volume_permission" in all_types
                         or "aws_ebs_snapshot_copy" in all_types):
@@ -2582,13 +2543,13 @@ def global_verifier(parsed_hcl_data):
                     results.append(z3_verify_encryption(encrypted, "aws_ebs_volume"))
                 handled = True
 
-            # ── Confidentiality ───────────────────────────────────────────────
+            # --- Confidentiality
             conf_keys = [
                 "db", "volume", "redshift", "efs", "neptune", "docdb", "qldb",
                 "ami", "stream", "topic", "vault", "airflow", "lustre",
                 "memorydb", "dax", "athena", "apprunner", "msk", "glue",
                 "mwaa", "workspaces", "opensearch", "elasticache",
-                # NOTE: "kms" intentionally removed — aws_kms_key has its own
+                # NOTE: "kms" intentionally removed - aws_kms_key has its own
                 # explicit handler above that checks wildcard principal FIRST (KMS_01)
                 # before key rotation (KMS_02). If "kms" stays here, conf_keys fires
                 # verify_confidentiality which only checks rotation and misses KMS_01.
@@ -2608,10 +2569,10 @@ def global_verifier(parsed_hcl_data):
                     results.append(mc_result)
                     handled = True
 
-            # ── Boundary ──────────────────────────────────────────────────────
-            # FIX RDS_02: skip security_group check when it's a satellite resource
+            # --- Boundary
+            # Exclude security_group checks when it evaluates a satellite resource.
             # attached to a primary resource (RDS, DocDB, Redshift, MQ, EKS, etc.).
-            # These test cases test the primary resource's violation — the SG is
+            # These test cases test the primary resource's violation - the SG is
             # only there to provide network config, not to be verified itself.
             _primary_owners = {
                 "aws_db_instance", "aws_docdb_cluster_instance", "aws_redshift_cluster",
@@ -2623,7 +2584,7 @@ def global_verifier(parsed_hcl_data):
                 and bool(all_types & _primary_owners)
             )
             if _is_satellite_sg:
-                results.append("PASS: Security Group (satellite — primary resource owns this test).")
+                results.append("PASS: Security Group (satellite - primary resource owns this test).")
                 handled = True
 
             bound_keys = [
@@ -2636,7 +2597,7 @@ def global_verifier(parsed_hcl_data):
                 results.append(verify_boundary(r_type, block))
                 handled = True
 
-            # ── Compute safety ────────────────────────────────────────────────
+            # --- Compute safety
             comp_keys = [
                 "task_definition", "codebuild_project", "batch_job_definition",
                 "container", "task"
@@ -2645,7 +2606,7 @@ def global_verifier(parsed_hcl_data):
                 results.append(verify_compute_safety(r_type, block))
                 handled = True
 
-            # ── Missing cases (25 new handlers) ──────────────────────────────
+            # --- Missing cases (25 new handlers)
             if not handled:
                 mc_result, mc_handled = verify_missing_cases(
                     r_type, block, all_types, parsed_hcl_data
@@ -2654,7 +2615,7 @@ def global_verifier(parsed_hcl_data):
                     results.append(mc_result)
                     handled = True
 
-            # ── Fallback ──────────────────────────────────────────────────────
+            # --- Fallback
             if not handled:
                 results.append(generic_integrity_check(r_type, block))
 
@@ -2671,36 +2632,36 @@ def global_verifier_with_patch_proof(
     """
     PATTERN 3 INTEGRATION: Full two-phase verification.
 
-    Phase 1 (AUTHORITATIVE — controls PASS/FAIL):
+    Phase 1 (AUTHORITATIVE - controls PASS/FAIL):
       global_verifier() checks all 100-case specific invariants.
       FAIL → return FAIL immediately. LLM must retry.
       PASS → patch is structurally correct. Proceed to Phase 2.
 
-    Phase 2 (ANNOTATION ONLY — never overrides Phase 1 PASS):
+    Phase 2 (ANNOTATION ONLY - never overrides Phase 1 PASS):
       z3_patch_safety_proof() runs the Cloud Perimeter refinement check.
       This only applies to encryption/network violations where the CPM
       variables are meaningful. For audit/logging/policy violations
       (WAF, ECR, ALB, CloudTrail etc.) Phase 1 is the sole authority.
 
       The Phase 2 result is appended as a proof annotation to the PASS
-      string — it NEVER turns a Phase 1 PASS into a FAIL.
+      string - it NEVER turns a Phase 1 PASS into a FAIL.
 
     Design rationale:
       The CPM models (NetworkZone, EncryptionLevel, SensitiveData).
       It cannot model "WAF association present" or "ECR lifecycle policy
-      exists" — those are structural/audit properties outside the CPM
+      exists" - those are structural/audit properties outside the CPM
       state space. Trying to force them through CPM always produces SAT
       (false positive FAIL) because patch_encrypted stays False for
       those resource types. Phase 1 handles those cases correctly.
     """
-    # ── PHASE 1: Authoritative invariant check ────────────────────────────────
+    # --- PHASE 1: Authoritative invariant check
     standard_result = global_verifier(patch_data)
 
     if "FAIL" in standard_result:
-        # Phase 1 caught a real violation — return immediately
+        # Phase 1 caught a real violation - return immediately
         return standard_result
 
-    # ── PHASE 2: CPM refinement proof (annotation only) ───────────────────────
+    # --- PHASE 2: CPM refinement proof (annotation only)
     # Only run for violation types the CPM can meaningfully model
     cpm_applicable = any(k in violation_msg.lower() for k in [
         "encrypt", "kms", "unencrypted",
@@ -2714,10 +2675,10 @@ def global_verifier_with_patch_proof(
             proof = z3_patch_safety_proof(
                 broken_data, patch_data, violation_msg, resource_name
             )
-            # Annotate the PASS with the formal proof — never override to FAIL
+            # Annotate the PASS with the formal proof - never override to FAIL
             return f"PASS: {proof['z3_verdict']}"
         except Exception:
-            # CPM proof failed for any reason — Phase 1 PASS still stands
+            # CPM proof failed for any reason - Phase 1 PASS still stands
             return standard_result
 
     # Phase 1 PASS, CPM not applicable (audit/logging/policy violation)

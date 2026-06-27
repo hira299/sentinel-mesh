@@ -4,7 +4,7 @@ import time
 import tempfile
 from datetime import datetime
 
-# ANSI Colors for Professional Security Audit Log Look
+# ANSI terminal colour codes for structured audit log output.
 GREEN = "\033[92m"
 RED = "\033[91m"
 YELLOW = "\033[93m"
@@ -19,7 +19,7 @@ from parsers.hcl_to_json import parse_hcl
 from core.verifier import global_verifier, global_verifier_with_patch_proof
 from core.llm_agent import get_remediation_patch
 
-MAX_RETRIES = 5  # Maximum attempts the LLM gets before we declare failure
+MAX_RETRIES = 5  # Maximum LLM synthesis attempts before the case is classified as a persistent repair failure.
 
 def run_sentinel_mesh(tf_file_path):
     """
@@ -39,11 +39,12 @@ def run_sentinel_mesh(tf_file_path):
     print(f"{CYAN}[TIMESTAMP]{RESET} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{BOLD}{'='*60}{RESET}")
 
-    # ── PHASE 1: INITIAL SYMBOLIC VERIFICATION ────────────────────────────────
+    # ---
     print(f"\n{BOLD}[*] PHASE 1: Symbolic Boundary Verification (Z3-SMT){RESET}")
     data = parse_hcl(tf_file_path)
     initial_result = global_verifier(data)
 
+    # Substring match is intentional: the verifier prefixes all passing verdicts with "PASS".
     if "PASS" in initial_result:
         print(f"{GREEN}[SUCCESS] Formal Proof: Configuration satisfies all security invariants.{RESET}")
         return {
@@ -55,13 +56,13 @@ def run_sentinel_mesh(tf_file_path):
 
     print(f"{RED}[VIOLATION] {initial_result}{RESET}")
 
-    # ── PHASE 2: CLOSED-LOOP NEURO-REMEDIATION ────────────────────────────────
+    # ---
     print(f"\n{BOLD}[*] PHASE 2: Closed-Loop Neuro-Remediation (LLM + Z3 Retry){RESET}")
 
     with open(tf_file_path, "r") as f:
         original_code = f.read()
 
-    # The current violation reason fed back to LLM each round
+    # The current violation message provided to the LLM at each iteration.
     current_violation = initial_result
     retry_history = []   # Stores Z3 verdict string for each attempt
     attempt = 0
@@ -81,7 +82,7 @@ def run_sentinel_mesh(tf_file_path):
             .strip()
         )
 
-        # ── RE-VERIFY THE PATCH WITH Z3 ───────────────────────────────────────
+        # ---
         print(f"      {CYAN}↳ Running Z3 Formal Verification on generated patch...{RESET}")
 
         with tempfile.NamedTemporaryFile(suffix=".tf", mode='w', delete=False) as tmp:
@@ -90,7 +91,7 @@ def run_sentinel_mesh(tf_file_path):
 
         try:
             patch_data = parse_hcl(temp_path)
-            # PATTERN 3: Use formal refinement proof instead of simple check
+            # Pattern 3: invoke the SMT-based dual-solver patch safety proof (refinement check).
             z3_result = global_verifier_with_patch_proof(
                 broken_data=parse_hcl(tf_file_path),
                 patch_data=patch_data,
@@ -104,7 +105,7 @@ def run_sentinel_mesh(tf_file_path):
         retry_history.append(z3_result)
 
         if "PASS" in z3_result:
-            print(f"{GREEN}[PASS] Attempt {attempt}: Z3 Formally Verified — Patch is SECURE!{RESET}")
+            print(f"{GREEN}[PASS] Attempt {attempt}: Z3 Formally Verified - Patch is SECURE!{RESET}")
             print(f"{GREEN}[PROVEN] Patch accepted after {attempt} attempt(s).{RESET}")
             return {
                 "result": "FIXED",
@@ -113,12 +114,12 @@ def run_sentinel_mesh(tf_file_path):
                 "final_verdict": z3_result
             }
         else:
-            print(f"{RED}[FAIL] Attempt {attempt}: Z3 Rejected — {z3_result}{RESET}")
-            print(f"      {YELLOW}↳ Hallucination detected. Feeding error back to LLM for retry...{RESET}")
+            print(f"{RED}[FAIL] Attempt {attempt}: Z3 Rejected - {z3_result}{RESET}")
+            print(f"      {YELLOW}↳ Patch rejected. Feeding updated violation context to LLM for retry...{RESET}")
             # Update context so LLM sees the newest rejection on the next loop
             current_violation = z3_result
 
-    # ── ALL RETRIES EXHAUSTED ─────────────────────────────────────────────────
+    # ---
     print(f"\n{RED}[CRITICAL] LLM failed to produce a valid patch after {MAX_RETRIES} attempts.{RESET}")
     print(f"{RED}[CONCLUSION] Persistent hallucination on: {case_name}{RESET}")
     return {

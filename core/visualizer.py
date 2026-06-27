@@ -1,5 +1,5 @@
 """
-visualizer.py — Sentinel-Mesh Empirical Results Visualizer
+visualizer.py: Sentinel-Mesh Empirical Results Visualizer
 ===========================================================
 Aggregates empirical remediation metrics from CloudFix-Bench evaluation
 logs and generates seven publication-quality figures (Figures 1–7) as
@@ -84,15 +84,15 @@ rcParams['ytick.major.size']   = 4
 # Colour assignments are semantically invariant across all seven figures to
 # support cross-figure interpretation without per-figure legend lookup.
 # Assignment rationale:
-#   GREEN      — autonomous remediation success (PASS / FIXED outcome)
-#   RED        — verification failure; LLM non-convergence across k_max retries
-#   DARK_BLUE  — remediation rate; high-confidence tier encoding (≥ 90% RR)
-#   MID_BLUE   — reserved for moderate-confidence tier encoding (70–90% RR)
-#   PURPLE     — dual-solver formal proof certificate (Pattern 3, FORMAL PROOF COMPLETE)
-#   PATCH_REJ  — PATCH REJECTED verdict (Solver A UNSAT; Solver B SAT)
-#   PASS_BLU   — structural PASS without dual-solver certificate (Phase I tier)
-#   AMBER      — mean-attempt statistic; mid-tier performance indicator
-#   ACCENT     — benchmark-wide average reference lines (dashed)
+#   GREEN      - autonomous remediation success (PASS / FIXED outcome)
+#   RED        - verification failure; LLM non-convergence across k_max retries
+#   DARK_BLUE  - remediation rate; high-confidence tier encoding (>= 90% RR)
+#   MID_BLUE   - reserved for moderate-confidence tier encoding (70-90% RR)
+#   PURPLE     - dual-solver formal proof certificate (Pattern 3, FORMAL PROOF COMPLETE)
+#   PATCH_REJ: PATCH REJECTED verdict. Subtype (a): Solver A SAT -- completeness failure, patch admits CPM invariant violation (5 cases). Subtype (b): Solver B SAT -- regression risk, vulnerability persistence possible (3 cases).
+#   PASS_BLU   - structural PASS without dual-solver certificate (Phase I tier)
+#   AMBER      - mean-attempt statistic; mid-tier performance indicator
+#   ACCENT     - benchmark-wide average reference lines (dashed)
 # ---------------------------------------------------------------------------
 FIG_BG    = 'white'
 AXES_BG   = 'white'
@@ -186,7 +186,7 @@ def _case_to_pillar(case_id: str) -> str:
     if prefix not in PREFIX_TO_PILLAR:
         print(
             f"[visualizer] WARNING: prefix '{prefix}' absent from "
-            f"PREFIX_TO_PILLAR for case '{case_id}' — mapped to 'Other'. "
+            f"PREFIX_TO_PILLAR for case '{case_id}' - mapped to 'Other'. "
             f"Verify benchmark corpus integrity."
         )
         return 'Other'
@@ -207,9 +207,11 @@ def _z3_outcome(z3_final: str) -> str:
         full mathematical certificate over the 12-point CPM discrete state
         space.
     PR
-        PATCH REJECTED: Solver A returned UNSAT but Solver B returned SAT,
-        indicating that the non-regression obligation was not satisfied.  The
-        patch is structurally compliant but carries unquantified regression risk.
+        PATCH REJECTED: two subtypes. Subtype (a) Solver A SAT - the patch admits
+        a CPM invariant violation (completeness failure, 5 cases). Subtype (b) Solver B
+        SAT - the regression conjunction is satisfiable, indicating possible vulnerability
+        persistence (regression risk, 3 cases). In both subtypes the original
+        configuration is preserved unchanged.
     BASIC
         Phase I structural PASS: the configuration satisfies CPM invariants
         under the heuristic dispatcher tiers but did not trigger the Pattern 3
@@ -414,7 +416,7 @@ def load_metrics(csv_paths: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 # ===========================================================================
-# Figure 1 — Per-Pillar Autonomous Remediation Rate
+# Figure 1 - Per-Pillar Autonomous Remediation Rate
 # Corresponds to Figure 1 in Section VII-A of the paper.
 # ===========================================================================
 
@@ -529,7 +531,7 @@ def fig1_remediation_by_pillar(agg: pd.DataFrame) -> None:
 
 
 # ===========================================================================
-# Figure 2 — LLM Retry Attempt Distribution
+# Figure 2 - LLM Retry Attempt Distribution
 # Corresponds to Figure 3 in Section VII-C of the paper.
 # ===========================================================================
 
@@ -643,7 +645,7 @@ def fig2_retry_convergence(df: pd.DataFrame) -> None:
 
 
 # ===========================================================================
-# Figure 3 — Verification Outcome Distribution
+# Figure 3 - Verification Outcome Distribution
 # Corresponds to Figure 4 in Section VII-D of the paper.
 # ===========================================================================
 
@@ -668,10 +670,10 @@ def fig3_outcome_distribution(df: pd.DataFrame, agg: pd.DataFrame) -> None:
         dual-solver schema.  Constitutes a full mathematical certificate
         over the 12-point CPM discrete state space.
     Patch Rejected (ORANGE)
-        Solver A returned UNSAT; Solver B returned SAT.  The patch is
-        structurally compliant but the non-regression obligation is not
-        satisfied.  The original configuration is preserved unchanged.
-    Basic PASS — no certificate (BLUE)
+        Either Solver A returned SAT (completeness failure) or Solver B
+        returned SAT (regression risk). The patch is rejected and the original
+        configuration is preserved unchanged.
+    Basic PASS - no certificate (BLUE)
         Configuration passed the Phase I heuristic dispatcher check
         without triggering the Pattern 3 dual-solver refinement proof.
     Failed / Hallucinated (RED)
@@ -749,7 +751,7 @@ def fig3_outcome_distribution(df: pd.DataFrame, agg: pd.DataFrame) -> None:
 
 
 # ===========================================================================
-# Figure 4 — Hallucination Rate vs. Remediation Success (Bubble Chart)
+# Figure 4 - Hallucination Rate vs. Remediation Success (Bubble Chart)
 # Corresponds to Figure 2 in Section VIII of the paper.
 # ===========================================================================
 
@@ -877,7 +879,7 @@ def fig4_hallucination_vs_remediation(agg: pd.DataFrame) -> None:
 
 
 # ===========================================================================
-# Figure 5 — Z3 Formal Proof Coverage by Infrastructure Pillar
+# Figure 5 - Z3 Formal Proof Coverage by Infrastructure Pillar
 # Corresponds to Figure 5 in Section VII-D of the paper.
 # ===========================================================================
 
@@ -991,7 +993,7 @@ def fig5_formal_proof_coverage(agg: pd.DataFrame, df: pd.DataFrame) -> None:
 
 
 # ===========================================================================
-# Figure 6 — Key Performance Metrics Summary Banner
+# Figure 6 - Key Performance Metrics Summary Banner
 # Consolidates primary evaluation metrics from Section VII into a single
 # publication figure.
 # ===========================================================================
@@ -1086,7 +1088,7 @@ def fig6_metrics_banner(agg: pd.DataFrame,
 
     csv_label = ', '.join(os.path.basename(p) for p in active_csv_paths)
     fig.suptitle(
-        f'Sentinel-Mesh \u2014 Key Performance Metrics'
+        f'Sentinel-Mesh - Key Performance Metrics'
         f'  ({n_total} Cases | {csv_label})',
         color=TEXT, fontsize=11, fontweight='bold', y=1.04,
     )
@@ -1095,7 +1097,7 @@ def fig6_metrics_banner(agg: pd.DataFrame,
 
 
 # ===========================================================================
-# Figure 7 — Provider Comparison: Remediation Rate and One-Shot Rate
+# Figure 7 - Provider Comparison: Remediation Rate and One-Shot Rate
 # Corresponds to Table 3 / Section VII-G of the paper.
 # ===========================================================================
 
@@ -1326,7 +1328,7 @@ if __name__ == '__main__':
     print(f'Overall RR   : {n_fixed_corpus / n_total_corpus * 100:.2f}%')
     unmapped = df[df['pillar'] == 'Other']
     if not unmapped.empty:
-        print(f'\n[WARN] {len(unmapped)} case(s) mapped to "Other" — '
+        print(f'\n[WARN] {len(unmapped)} case(s) mapped to "Other" - '
               f'verify PREFIX_TO_PILLAR completeness:')
         print(unmapped[['case_id', 'pillar']].to_string(index=False))
 
