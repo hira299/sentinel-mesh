@@ -28,9 +28,6 @@ The verifier acts as a closed-loop acceptance oracle. The LLM cannot produce a p
 
 Evaluated on 105 hand-crafted Terraform misconfiguration benchmark cases across 8 cloud infrastructure pillars.
 
-&nbsp;
-
-<img width="1206" height="1086" alt="fig1_ieee" src="https://github.com/user-attachments/assets/12ed2d1a-12c0-4516-8891-1f22f50cda02" />
 
 &nbsp;
 
@@ -59,10 +56,6 @@ Evaluated on 105 hand-crafted Terraform misconfiguration benchmark cases across 
 | Compute | 23 | 17 | 73.9% |
 | Analytics | 13 | 9 | 69.2% |
 | Storage | 10 | 6 | 60.0% |
-
-&nbsp;
-
-<img width="1047" height="875" alt="fig5_ieee" src="https://github.com/user-attachments/assets/c6b25b78-289d-4441-ab64-fd1ddf0213aa" />
 
 &nbsp;
 
