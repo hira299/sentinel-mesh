@@ -1,3 +1,4 @@
+import re
 import sys
 import os
 import time
@@ -20,6 +21,39 @@ from core.verifier import global_verifier, global_verifier_with_patch_proof
 from core.llm_agent import get_remediation_patch
 
 MAX_RETRIES = 5  # Maximum LLM synthesis attempts before the case is classified as a persistent repair failure.
+
+# Compiled once at module load; matches fenced HCL/Terraform code blocks produced by LLM backends.
+_HCL_FENCE_RE = re.compile(
+    r"```(?:hcl|terraform)?\s*(.*?)\s*```",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def extract_clean_hcl(raw_output: str) -> str:
+    """
+    Extracts the HCL payload from an LLM text response via regular expression matching.
+
+    Searches `raw_output` for the first fenced code block whose optional language
+    tag is 'hcl' or 'terraform' (case-insensitive). Returns the captured interior
+    stripped of leading/trailing whitespace. When no fence is present, returns the
+    full string stripped of whitespace, preserving backward compatibility with
+    providers that emit bare HCL without a fence delimiter.
+
+    Parameters
+    ----------
+    raw_output : str
+        Raw text response from the LLM synthesis backend.
+
+    Returns
+    -------
+    str
+        Normalised HCL source suitable for HCL2 parsing and Z3 verification.
+    """
+    match = _HCL_FENCE_RE.search(raw_output)
+    if match:
+        return match.group(1).strip()
+    # No fence found: strip residual whitespace and return verbatim.
+    return raw_output.strip()
 
 def run_sentinel_mesh(tf_file_path):
     """
@@ -74,13 +108,8 @@ def run_sentinel_mesh(tf_file_path):
 
         # LLM generates a patch informed by the Z3 rejection reason
         raw_patch = get_remediation_patch(original_code, current_violation, attempt)
-        clean_patch = (
-            raw_patch
-            .replace("```terraform", "")
-            .replace("```hcl", "")
-            .replace("```", "")
-            .strip()
-        )
+        # Isolates HCL payload from conversational LLM prefixes via regex extraction.
+        clean_patch = extract_clean_hcl(raw_patch)
 
         # ---
         print(f"      {CYAN}↳ Running Z3 Formal Verification on generated patch...{RESET}")
