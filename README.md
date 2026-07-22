@@ -188,7 +188,7 @@ If you use Sentinel-Mesh in your research or project, please cite:
 ```bibtex
 @article{ahmed2026sentinelmesh,
   title   = {Sentinel-Mesh: Neuro-Symbolic Autonomous Remediation of Cloud Infrastructure Misconfigurations},
-  author  = {Hira Ahmed and Muhammad Saad et al.},
+  author  = {Hira Ahmed et al.},
   year    = {2026},
   url     = {https://github.com/hira299/sentinel-mesh}
   url     = {https://github.com/hira299/sentinel-mesh}
