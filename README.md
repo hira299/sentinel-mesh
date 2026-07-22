@@ -191,6 +191,7 @@ If you use Sentinel-Mesh in your research or project, please cite:
   author  = {Hira Ahmed and Muhammad Saad et al.},
   year    = {2026},
   url     = {https://github.com/hira299/sentinel-mesh}
+  url     = {https://github.com/hira299/sentinel-mesh}
 }
 ```
 
