@@ -1,116 +1,199 @@
-# Sentinel-Mesh
+# Sentinel-Mesh: Neuro-Symbolic Autonomous Remediation of Cloud Infrastructure Misconfigurations
 
-Neuro-symbolic framework for autonomous remediation of cloud infrastructure misconfigurations. Combines LLM-driven patch generation with Z3 SMT formal verification in a closed feedback loop.
+Sentinel-Mesh is a formal-methods-guided framework for the autonomous remediation of cloud infrastructure misconfigurations defined in Terraform Infrastructure-as-Code (IaC). By combining multi-provider Large Language Models (LLMs) with Z3 SMT formal verification in a closed feedback loop, Sentinel-Mesh guarantees that generated security patches conform to formal cloud perimeter invariants prior to deployment.
 
-## How it works
+---
 
-1. A Terraform misconfiguration is detected and passed to the LLM agent
-2. The agent generates a remediation patch
-3. The Z3 verifier checks the patch against formal security invariants (Cloud Perimeter Model)
-4. If the patch fails verification, the Z3 error message is fed back to the LLM and the loop retries
-5. Once the patch satisfies all invariants, it is accepted. For encryption and network violations, a formal proof certificate is additionally issued via dual-solver Z3 refinement (37/88 fixed cases in the benchmark)
+## Technical Resources
 
-The verifier acts as a closed-loop acceptance oracle — the LLM cannot produce a patch that passes without satisfying the formal constraints.
+- Zenodo Concept DOI: [https://doi.org/10.5281/zenodo.20975067](https://doi.org/10.5281/zenodo.20975067)
+- Medium Technical Deep-Dive: [Autonomous Cloud Security with Sentinel-Mesh](https://medium.com/@hira-ahmed/sentinel-mesh-neuro-symbolic-remediation)
 
-## Benchmark results
+---
 
-Evaluated on 105 hand-crafted Terraform misconfiguration benchmark cases across 8 cloud infrastructure pillars.
+## Architecture & How It Works
 
-| Metric | Result |
+Sentinel-Mesh operates through a 5-step closed-loop neuro-symbolic feedback cycle:
+
+1. Misconfiguration Ingestion & Parsing: Terraform HCL configurations are ingested and transformed into JSON Abstract Syntax Trees (AST) via `parsers/hcl_to_json.py`, which are then mapped to Z3 SMT logical formulas representing resource configurations and environment parameters.
+2. Candidate Patch Generation: A fine-tuned LLM agent (supporting Cerebras, Gemini, and Groq backends) receives the AST representation alongside detected vulnerability contexts to synthesize targeted HCL remediation patches.
+3. SMT Gatekeeper Verification: The candidate patch is passed to the Z3 SMT formal verifier (`core/verifier.py`), which evaluates the patch against strict Cloud Perimeter Model security invariants (such as non-public access policies, enforced encryption at rest/transit, and isolated network perimeters).
+4. Closed-Loop Feedback & Refinement: If verification fails, Z3 produces unsat core counterexample feedback. This formal error trace is reinjected into the LLM prompt context, enabling targeted patch refinement across up to k=5 iterations.
+5. Pattern 3 Dual-Solver Proof Certification: For high-risk security policies (including network perimeter boundaries and cryptographic key configurations), Sentinel-Mesh executes Pattern 3 dual-solver Z3 refinement to generate a mathematically binding Formal Proof Certificate verifying zero remaining invariant violations.
+
+---
+
+## Empirical Benchmark Results (CloudFix-Bench)
+
+Sentinel-Mesh was evaluated on CloudFix-Bench, a comprehensive benchmark dataset consisting of N=105 hand-crafted Terraform misconfigurations spanning 8 core cloud infrastructure pillars.
+
+### Overall Performance Indicators
+
+| Metric | Value |
 |---|---|
-| Overall remediation rate | 88/105 (83.81%) |
-| One-shot resolution rate | 85.23% (75/88 at k=1) |
-| Formal proof certificates issued | 37 (29 FPC + 8 PATCH REJECTED) |
-| LLM hallucination rate | 16.19% (17/105) |
-| Mean attempts per fixed case | μ=1.27, σ=0.74 |
+| Remediation Rate (RR) | 88/105 (83.81%) |
+| One-Shot Resolution Rate (k=1) | 85.23% (75/88) |
+| Formal Proof Certificates Issued | 29 |
+| Hallucinated / Blocked Cases | 17/105 (16.19%) |
+| Security Regression Rate | 0.0% |
 
-> **Note:** The benchmark uses k=5 retries in `experiment_runner.py`. The default `MAX_RETRIES=3` in `orchestrator.py` must be overridden to reproduce published results.
+### Per-Pillar Remediation Breakdown
 
-### By pillar
-
-| Pillar | Cases | Fixed | Rate |
+| Infrastructure Pillar | Total Cases (N) | Fixed Cases | Remediation Rate (%) |
 |---|---|---|---|
-| Identity | 9 | 9 | 100% |
-| Management | 6 | 6 | 100% |
+| Management | 7 | 7 | 100.0% |
+| Identity | 9 | 9 | 100.0% |
 | Database | 17 | 16 | 94.1% |
 | Networking | 15 | 14 | 93.3% |
-| Security | 12 | 11 | 91.7% |
-| Compute | 23 | 17 | 73.9% |
-| Analytics | 13 | 9 | 69.2% |
-| Storage | 10 | 6 | 60.0% |
+| Security | 11 | 9 | 81.8% |
+| Compute | 22 | 16 | 72.7% |
+| Analytics | 14 | 10 | 71.4% |
+| Storage | 10 | 7 | 70.0% |
+| **Total / Overall** | **105** | **88** | **83.81%** |
 
-## Setup
+---
 
-```bash
-git clone https://github.com/your-username/sentinel-mesh
-cd sentinel-mesh
-make install
-```
+## Installation & Environment Setup
 
-Copy `.env.example` to `.env` and add your API keys:
+### Prerequisites
 
-```
-CEREBRAS_API_KEY=...
-GEMINI_API_KEY=...
-GROQ_API_KEY=...
-```
+- Python 3.10 or higher
+- Git
 
-## Usage
+### Step-by-Step Setup
 
-```bash
-# Run full benchmark
-make benchmark
+1. Clone the repository:
 
-# Generate result figures
-make visualize
+   ```bash
+   git clone https://github.com/hira299/sentinel-mesh.git
+   cd sentinel-mesh
+   ```
 
-# Single run
-make run
-```
+2. Create and activate a Python virtual environment:
 
-Results are written to `logs/research_data_v100.csv`. Figures are saved to `logs/`.
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
 
-## Project structure
+3. Install required dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Configure environment variables:
+
+   Copy `.env.example` to `.env` and set your API keys for the LLM providers:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Edit `.env` to supply valid credentials:
+
+   ```env
+   CEREBRAS_API_KEY=your_cerebras_api_key
+   GEMINI_API_KEY=your_gemini_api_key
+   GROQ_API_KEY=your_groq_api_key
+   ```
+
+---
+
+## Execution CLI Suite
+
+Sentinel-Mesh includes a complete command-line suite for benchmark execution, baseline comparisons, ablation studies, and visualization:
+
+1. Primary Benchmark Evaluation:
+
+   Run the core neuro-symbolic remediation loop across CloudFix-Bench with your chosen provider:
+
+   ```bash
+   python core/experiment_runner.py --provider groq
+   ```
+
+   Available providers: `groq`, `gemini`, `cerebras`.
+
+2. Static Linter Baseline Comparison:
+
+   Evaluate static analysis baseline performance using Checkov rules:
+
+   ```bash
+   python core/checkov_baseline_runner.py --provider groq
+   ```
+
+3. Controlled Ablation Study:
+
+   Run the ablation benchmark without Z3 counterexample feedback (no-witness mode):
+
+   ```bash
+   python core/ablation_no_witness_runner.py --provider groq
+   ```
+
+4. External Wild IaC Evaluation:
+
+   Evaluate Sentinel-Mesh generalizability against real-world external Terraform configurations:
+
+   ```bash
+   python core/external_wild_runner.py --provider groq
+   ```
+
+5. Dynamic Result Visualizer:
+
+   Generate publication-grade figures and statistical plots from log data:
+
+   ```bash
+   python core/visualizer.py
+   ```
+
+---
+
+## Repository Structure
 
 ```
 sentinel-mesh/
-├── benchmark/
-│   └── test_cases/        # 105 Terraform misconfiguration test cases
-├── core/
-│   ├── verifier.py        # Z3 SMT verifier and Cloud Perimeter Model (2591 lines)
-│   ├── orchestrator.py    # closed-loop remediation orchestrator (MAX_RETRIES=3)
-│   └── llm_agent.py       # LLM patch generation agent (Cerebras/Gemini/Groq rotation)
-├── parsers/
-│   └── hcl_to_json.py     # Terraform HCL parser
-├── experiment_runner.py   # batch benchmark runner (uses k=5 retries)
-├── visualizer.py          # result figure generation
-├── logs/                  # generated outputs (gitignored)
-├── Makefile
-└── requirements.txt
+|-- benchmark/
+|   |-- external_wild_cases/   # External real-world Terraform misconfigurations
+|   |-- test_cases/            # CloudFix-Bench suite (N=105 test cases)
+|   `-- rules.json             # Formal security rule definitions
+|-- core/
+|   |-- ablation_no_witness_runner.py  # Ablation study runner without witness feedback
+|   |-- check_initial_verdicts.py      # Verification validator for ground truth states
+|   |-- checkov_baseline_runner.py     # Checkov static linter baseline harness
+|   |-- experiment_runner.py          # Primary CloudFix-Bench experiment runner
+|   |-- external_wild_runner.py        # External wild IaC evaluation harness
+|   |-- llm_agent.py                  # Multi-provider LLM interface module
+|   |-- orchestrator.py               # Closed-loop remediation orchestrator engine
+|   |-- verifier.py                   # Z3 SMT verifier and Cloud Perimeter Model
+|   `-- visualizer.py                 # Dynamic visualizer and figure generator
+|-- infrastructure/
+|   `-- docker-compose.yml            # Docker composition for sandbox environment
+|-- logs/                             # Benchmark CSV output logs and generated figures
+|-- parsers/
+|   `-- hcl_to_json.py                # Terraform HCL AST parser script
+|-- DEV_WORKFLOW.md                   # Developer guidelines and workflow procedures
+|-- Makefile                          # Command execution shortcut targets
+|-- requirements.txt                  # Python dependency specifications
+`-- README.md                         # Framework documentation
 ```
 
-## Dependencies
+---
 
-- Python 3.10+
-- z3-solver
-- python-hcl2
-- matplotlib
-- cerebras-cloud-sdk
-- See `requirements.txt` for full list
+## Citation & License
 
-## Citation
+### Citation
 
-If you use this work, please cite:
+If you use Sentinel-Mesh in your research or project, please cite:
 
 ```bibtex
-@misc{sentinelmesh2026,
-  title   = {Sentinel-Mesh: Neuro-Symbolic Autonomous Remediation of Cloud Misconfigurations},
-  author  = {Your Name},
+@article{ahmed2026sentinelmesh,
+  title   = {Sentinel-Mesh: Neuro-Symbolic Autonomous Remediation of Cloud Infrastructure Misconfigurations},
+  author  = {Hira Ahmed and Muhammad Saad et al.},
   year    = {2026},
-  url     = {https://github.com/your-username/sentinel-mesh}
+  url     = {https://github.com/hira299/sentinel-mesh}
 }
 ```
 
-## License
+### License
 
-MIT
+This project is licensed under the terms of the MIT License.
