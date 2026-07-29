@@ -1,8 +1,8 @@
 # Sentinel-Mesh: A Neuro-Symbolic Framework for Formally Verified Remediation of Cloud Misconfigurations
 
-### 📊 Includes CloudFix-Bench: A Formally Verifiable Benchmark for Autonomous Cloud Infrastructure Repair ($N=105$)
+### Includes CloudFix-Bench: A Formally Verifiable Benchmark for Autonomous Cloud Infrastructure Repair ($N=105$)
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21492985.svg)](https://doi.org/10.5281/zenodo.21492985)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.21492985-blue.svg)](https://doi.org/10.5281/zenodo.21492985)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
