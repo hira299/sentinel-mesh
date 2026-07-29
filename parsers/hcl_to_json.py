@@ -1,4 +1,5 @@
 # Uses python-hcl2 to convert Terraform to JSON
+
 import hcl2
 
 def parse_hcl(file_path):
