@@ -2,7 +2,7 @@
 
 ### Includes CloudFix-Bench: A Formally Verifiable Benchmark for Autonomous Cloud Infrastructure Repair ($N=105$)
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.21492985-blue.svg)](https://doi.org/10.5281/zenodo.21492985)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20975067-blue.svg)](https://doi.org/10.5281/zenodo.20975067)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
@@ -12,7 +12,7 @@ Sentinel-Mesh is a formal-methods-guided framework for the autonomous remediatio
 
 ## Technical Resources
 
-- **Zenodo Archived Dataset & DOI:** [10.5281/zenodo.21492985](https://doi.org/10.5281/zenodo.21492985)
+- **Zenodo Archived Dataset & DOI:** [10.5281/zenodo.20975067](https://doi.org/10.5281/zenodo.20975067)
 - **Medium Technical Deep-Dive:** [Beyond Heuristics: Formally Verifying AI-Generated Infrastructure with Z3 SMT Solvers](https://medium.com/@hira229922/beyond-heuristics-formally-verifying-ai-generated-infrastructure-with-z3-smt-solvers-e95fd3a7bf95)
 
 ---
@@ -195,8 +195,8 @@ If you use **CloudFix-Bench** or the **Sentinel-Mesh** framework in your researc
   title        = {{Sentinel-Mesh: A Neuro-Symbolic Framework for Formally Verified Remediation of Cloud Misconfigurations}},
   journal      = {arXiv preprint},
   year         = {2026},
-  doi          = {10.5281/zenodo.21492985},
-  url          = {https://doi.org/10.5281/zenodo.21492985}
+  doi          = {10.5281/zenodo.20975067},
+  url          = {https://doi.org/10.5281/zenodo.20975067}
 }
 ```
 
