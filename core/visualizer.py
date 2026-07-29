@@ -1122,6 +1122,17 @@ def fig8_external_wild_generalisability(wild_csv_path: str) -> None:
     n_remediated = cat_counts[_WILD_CAT_FPC] + cat_counts[_WILD_CAT_BASIC]
     overall_rr   = n_remediated / n_total * 100 if n_total > 0 else 0.0
 
+    # -- Ground-truth remediation rate from raw CSV column -----------
+    # Derived directly from hallucination column (False = successfully
+    # patched and Z3-verified), matching result == 'FIXED' in the CSV.
+    # This is the authoritative count reported in the figure title and
+    # Section VII-H; it differs from n_remediated above because cases
+    # classified as PATCH REJECTED may still carry hallucination=False
+    # (e.g. wild_cloudfront.tf: patch accepted by Z3 but flagged as
+    # a regression risk - still counts as a verified fix in the CSV).
+    fixed_count = int((~df_wild['_hall']).sum())
+    title_rr    = fixed_count / n_total * 100 if n_total > 0 else 0.0
+
     print(
         f'[fig8] Wild case breakdown -- '
         f'FPC: {cat_counts[_WILD_CAT_FPC]}  '
@@ -1205,11 +1216,16 @@ def fig8_external_wild_generalisability(wild_csv_path: str) -> None:
     ax_summary.spines['bottom'].set_color('#bbbbbb')
     ax_summary.set_title('Summary', color=TEXT, fontsize=10, fontweight='bold', pad=8)
 
+    print(
+        f'[fig8] Title RR from raw CSV (hallucination==False): '
+        f'{fixed_count}/{n_total} = {title_rr:.2f}%'
+    )
+
     # -- Figure-level title -------------------------------------------
     fig.suptitle(
         f'Figure 8: External Wild IaC Generalisation Evaluation\n'
-        f'(n = {n_total}  |  Remediation Rate: {overall_rr:.1f}%  '
-        f'[{n_remediated}/{n_total} Cases])  '
+        f'(n = {n_total}  |  Remediation Rate: {title_rr:.1f}%  '
+        f'[{fixed_count}/{n_total} Cases])  '
         f'-- Groq Llama-3.3-70B Provider',
         color=TEXT, fontsize=12, fontweight='bold', y=1.01,
     )
