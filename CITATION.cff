@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use CloudFix-Bench or the Sentinel-Mesh framework in your research, software, or benchmarks, you ARE REQUIRED to cite this work as specified below."
+type: dataset
+title: "CloudFix-Bench: A Formally Verifiable Benchmark for Autonomous Cloud Infrastructure Repair"
+authors:
+  - family-names: "Ahmed"
+    given-names: "Hira"
+    orcid: "https://orcid.org/0009-0005-3219-7252"
+    affiliation: "Department of Cyber Security, Sir Syed University of Engineering and Technology"
+repository-code: "https://github.com/hira299/sentinel-mesh"
+doi: "https://doi.org/10.5281/zenodo.20975067"
+date-released: 2026-07-22
+version: "1.0.2"
+license: MIT

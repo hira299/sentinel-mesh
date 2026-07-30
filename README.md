@@ -1,6 +1,6 @@
 # Sentinel-Mesh: A Neuro-Symbolic Framework for Formally Verified Remediation of Cloud Misconfigurations
 
-### Includes CloudFix-Bench: A Formally Verifiable Benchmark for Autonomous Cloud Infrastructure Repair ($N=105$)
+### 📊 Includes CloudFix-Bench: A Formally Verifiable Benchmark for Autonomous Cloud Infrastructure Repair ($N=105$)
 
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20975067-blue.svg)](https://doi.org/10.5281/zenodo.20975067)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -158,6 +158,7 @@ sentinel-mesh/
 |-- benchmark/
 |   |-- external_wild_cases/   # External real-world Terraform misconfigurations (N=12)
 |   |-- test_cases/            # CloudFix-Bench suite (N=105 test cases)
+|   |-- README.md              # CloudFix-Bench terms of use, structure & attribution guide
 |   `-- rules.json             # Formal security rule definitions
 |-- core/
 |   |-- ablation_no_witness_runner.py  # Controlled ablation runner without witness feedback
@@ -175,7 +176,9 @@ sentinel-mesh/
 |-- logs/                             # Benchmark CSV output logs and generated figures
 |-- parsers/
 |   `-- hcl_to_json.py                # Terraform HCL AST parser script
+|-- CITATION.cff                      # Machine-readable GitHub citation metadata specification
 |-- DEV_WORKFLOW.md                   # Developer guidelines and workflow procedures
+|-- LICENSE                           # MIT License specification
 |-- Makefile                          # Command execution shortcut targets
 |-- requirements.txt                  # Python dependency specifications
 `-- README.md                         # Framework documentation
@@ -187,9 +190,12 @@ sentinel-mesh/
 
 ### Citation
 
-If you use **CloudFix-Bench** or the **Sentinel-Mesh** framework in your research or tooling, please cite our work as follows:
+If you use **Sentinel-Mesh** or **CloudFix-Bench** in your research or tooling, please cite our work using the metadata below.
 
-```
+> 💡 **Automated Citation Metadata:** You can also use the [`CITATION.cff`](./CITATION.cff) file included in the root directory or click the **"Cite this repository"** button on the right sidebar of the GitHub interface.
+
+#### Research Paper
+```bibtex
 @article{ahmed2026sentinelmesh,
   author       = {Ahmed, Hira and Saad, Muhammad and Shaikh, Muhammad Kashif and Naseem, Muhammad and Zaki, Hassan and Rasheed, Muhammad Rehan},
   title        = {{Sentinel-Mesh: A Neuro-Symbolic Framework for Formally Verified Remediation of Cloud Misconfigurations}},
@@ -200,8 +206,19 @@ If you use **CloudFix-Bench** or the **Sentinel-Mesh** framework in your researc
 }
 ```
 
+#### CloudFix-Bench Dataset
+```bibtex
+@misc{ahmed2026cloudfixbench,
+  author       = {Ahmed, Hira},
+  title        = {{CloudFix-Bench: A Formally Verifiable Benchmark for Autonomous Cloud Infrastructure Repair}},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.20975067},
+  url          = {https://doi.org/10.5281/zenodo.20975067}
+}
+```
+
 ### License
 
 This project is licensed under the terms of the MIT License.
-
----
+```
