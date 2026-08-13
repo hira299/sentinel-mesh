@@ -190,7 +190,7 @@ sentinel-mesh/
 
 ### Citation
 
-If you use **Sentinel-Mesh** or **CloudFix-Bench** in your research or tooling, please cite our work using the metadata below.
+If you use **Sentinel-Mesh** or **CloudFix-Bench** in your research or tooling, please cite our research paper preprint and archived dataset using the metadata below:
 
 > 💡 **Automated Citation Metadata:** You can also use the [`CITATION.cff`](./CITATION.cff) file included in the root directory or click the **"Cite this repository"** button on the right sidebar of the GitHub interface.
 
@@ -199,17 +199,17 @@ If you use **Sentinel-Mesh** or **CloudFix-Bench** in your research or tooling, 
 @article{ahmed2026sentinelmesh,
   author       = {Ahmed, Hira and Saad, Muhammad and Shaikh, Muhammad Kashif and Naseem, Muhammad and Zaki, Hassan and Rasheed, Muhammad Rehan},
   title        = {{Sentinel-Mesh: A Neuro-Symbolic Framework for Formally Verified Remediation of Cloud Misconfigurations}},
-  journal      = {arXiv preprint},
+  journal      = {Research Square Preprint},
   year         = {2026},
-  doi          = {10.5281/zenodo.20975067},
-  url          = {https://doi.org/10.5281/zenodo.20975067}
+  doi          = {10.21203/rs.3.rs-10674271/v1},
+  url          = {https://doi.org/10.21203/rs.3.rs-10674271/v1}
 }
 ```
 
 #### CloudFix-Bench Dataset
 ```bibtex
 @misc{ahmed2026cloudfixbench,
-  author       = {Ahmed, Hira},
+  author       = {Ahmed, Hira and Saad, Muhammad},
   title        = {{CloudFix-Bench: A Formally Verifiable Benchmark for Autonomous Cloud Infrastructure Repair}},
   year         = {2026},
   publisher    = {Zenodo},
